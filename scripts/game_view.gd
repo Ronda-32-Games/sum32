@@ -1,8 +1,8 @@
 extends Control
-## Vista y control de Sum 32: dibuja la grilla con el arte de Lía, maneja el arrastre,
-## los sonidos y el efecto del ¡32!, y habla con la página (Telegram y panel de medición).
-## Toda la regla está en Board; los colores en assets/paleta.json; los sonidos en
-## assets/sonidos/sonidos.json.
+## Vista y control de Sum 32 (H1, modo Practice): pantallas, HUD, arrastre, sonidos y
+## efectos con el arte de Lía, y puente con la página (Telegram, récord, medición).
+## Las reglas viven en Board (grilla) y Round (partida); los colores en
+## assets/paleta.json; los sonidos en assets/sonidos/sonidos.json.
 
 const CONFIG_PATH := "res://data/config.json"
 const PALETTE_PATH := "res://assets/paleta.json"
@@ -17,33 +17,52 @@ const TILE_PX := 256.0
 const BODY_PX := 200.0
 const BODY_CENTER_Y := [121.5, 113.5, 113.5, 113.5, 121.5]  # las de cadena suben 2 px
 
+# Pantallas de H1.
+enum Screen { START, PLAYING, PAUSED, RESULT }
+
 # Tiempos del efecto del ¡32! (traspaso de Lía).
 const FX_GROW := 0.08
 const FX_GONE := 0.26
 const FX_TEXT := 0.60
+const FX_SCORE_FLY := 0.40
+const FX_FLASH := 0.12
 const PARTICLES_PER_CELL := 6
 const PARTICLES_MAX := 48
 
 var config: Dictionary = {}
 var pal: Dictionary = {}
 var board: Board
+var round_: Round
 var font_num: Font
 var font_ui: Font
 var sounds: Dictionary = {}
+var screen := Screen.START
+var seed_base := 0
+var games_played := 0
 
 var chain := PackedInt32Array()
 var dragging := false
 var last_pointer := Vector2.ZERO
-var chains_cleared := 0
 var chain_state := "neutro"
+
+# Récord personal (navegador del jugador; en H2 pasa al servidor).
+var best_score := 0
+var new_best := false
+
+# Reloj.
+var ms_acc := 0.0
+var last_tick_s := -1
 
 # Geometría (unidades del juego), calculada en _layout().
 var grid_origin := Vector2.ZERO
+var grid_w := 600.0
 var cell_pitch := 100.0
 var top_inset := 0.0
 var col_x := 0.0
 var col_w := 720.0
 var px := 2.0  # cuántas unidades del juego mide 1 px de un celular de 360 de ancho
+var score_pos := Vector2.ZERO
+var button_rect := Rect2()
 
 # Animaciones.
 var fall_offset := PackedFloat32Array()
@@ -52,11 +71,15 @@ var fx_t := -1.0          # tiempo desde el borrado; -1 = sin efecto
 var fx_cells := PackedInt32Array()
 var fx_snapshot := PackedInt32Array()
 var fx_text_pos := Vector2.ZERO
+var fx_points := 0
+var fx_combo := 10
+var bonus_t := -1.0       # cartel "+2s"
 var particles: Array = []
 var fx_rng := RandomNumberGenerator.new()
 
 var frames := 0
 var fps_timer := 0.0
+var hidden_poll := 0.0
 
 
 func _ready() -> void:
@@ -67,20 +90,44 @@ func _ready() -> void:
 	font_num = _load_font("res://assets/fuentes/MartianMono-Bold-Sum32.ttf")
 	font_ui = _load_font("res://assets/fuentes/MartianMono-Medium-UI.ttf")
 	_load_sounds()
-	var seed_value := int(Time.get_unix_time_from_system() * 1000.0) & Mulberry32.MASK
+	seed_base = int(Time.get_unix_time_from_system() * 1000.0) & Mulberry32.MASK
 	# Para pruebas (Nahir): ?seed=123 en la dirección repite siempre la misma grilla.
 	var url_seed = _js("new URLSearchParams(location.search).get('seed') || ''")
 	if url_seed is String and (url_seed as String).is_valid_int():
-		seed_value = int(url_seed) & Mulberry32.MASK
+		seed_base = int(url_seed) & Mulberry32.MASK
 	# Para revisar animaciones (Lía, Nahir): ?slow=10 corre todo 10 veces más lento.
 	var url_slow = _js("new URLSearchParams(location.search).get('slow') || ''")
 	if url_slow is String and (url_slow as String).is_valid_float() and float(url_slow) >= 1.0:
 		Engine.time_scale = 1.0 / float(url_slow)
-	board = Board.new(config, seed_value)
+	# Para pruebas (Nahir): ?round=5 acorta la partida a 5 segundos.
+	var url_round = _js("new URLSearchParams(location.search).get('round') || ''")
+	if url_round is String and (url_round as String).is_valid_int() and int(url_round) > 0:
+		config["round_seconds"] = int(url_round)
+	var saved = _js("window.r32 ? window.r32.getBest() : 0")
+	best_score = int(saved) if saved != null else 0
+	_new_round()
 	fall_offset.resize(board.size * board.size)
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	_js("window.r32 && window.r32.onGodotReady()")
+
+
+func _new_round() -> void:
+	# Practice: grilla nueva por partida. Con ?seed=, la primera es la pedida.
+	var seed_value := seed_base if games_played == 0 else Mulberry32.derive(seed_base, games_played)
+	board = Board.new(config, seed_value)
+	round_ = Round.new(config, board)
+	chain = PackedInt32Array()
+	chain_state = "neutro"
+	dragging = false
+	ms_acc = 0.0
+	last_tick_s = -1
+	new_best = false
+	fx_t = -1.0
+	bonus_t = -1.0
+	particles.clear()
+	fall_offset.resize(board.size * board.size)
+	fall_offset.fill(0.0)
 
 
 func _load_json(path: String) -> Dictionary:
@@ -103,7 +150,7 @@ func _load_font(path: String) -> Font:
 
 func _load_sounds() -> void:
 	var spec := _load_json(SOUNDS_PATH)
-	for key in ["toque", "justo", "pasado", "clear_32"]:
+	for key in ["toque", "justo", "pasado", "clear_32", "combo", "tiempo_extra", "tick", "fin", "record", "boton"]:
 		if not spec.has(key):
 			continue
 		var stream = load("res://assets/sonidos/" + str(spec[key]["archivo"]))
@@ -151,12 +198,28 @@ func _layout() -> void:
 	col_w = minf(view.x, (view.y - top_inset) * 0.6)
 	col_x = (view.x - col_w) * 0.5
 	px = col_w / 360.0
-	var header_h := col_w * 0.42
+	var header_h := col_w * 0.46
 	var avail_h := view.y - top_inset - header_h - col_w * 0.06
-	var grid_w := minf(col_w * 0.92, avail_h)
+	grid_w = minf(col_w * 0.92, avail_h)
 	cell_pitch = grid_w / board.size
 	var extra := maxf(0.0, avail_h - grid_w)
 	grid_origin = Vector2((view.x - grid_w) * 0.5, top_inset + header_h + extra * 0.3)
+	score_pos = Vector2(col_x + col_w * 0.86, top_inset + col_w * 0.16)
+	queue_redraw()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_pause()
+
+
+func _pause() -> void:
+	if screen != Screen.PLAYING:
+		return
+	screen = Screen.PAUSED
+	dragging = false
+	chain = PackedInt32Array()
+	chain_state = "neutro"
 	queue_redraw()
 
 
@@ -168,7 +231,19 @@ func _process(delta: float) -> void:
 	if fps_timer >= 0.5:
 		fps_timer = 0.0
 		_js("window.r32 && window.r32.reportFps(%d, %s)" % [Engine.get_frames_per_second(), "true" if dragging else "false"])
-	var animating := false
+	# La app pasó a segundo plano (llamada, otro chat): pausa y tapa la grilla.
+	hidden_poll += delta
+	if hidden_poll >= 0.25:
+		hidden_poll = 0.0
+		# El puente devuelve los booleanos de JavaScript como 0 o 1.
+		var hid = _js("window.r32 ? window.r32.isHidden() : 0")
+		if hid != null and bool(hid):
+			_pause()
+
+	if screen == Screen.PLAYING:
+		_tick_clock(delta)
+
+	var animating := screen == Screen.PLAYING
 	if fx_t >= 0.0:
 		var before := fx_t
 		fx_t += delta
@@ -180,6 +255,11 @@ func _process(delta: float) -> void:
 				fall_offset[i] = pending_fall[i] * cell_pitch
 		if fx_t > FX_GONE + FX_TEXT:
 			fx_t = -1.0
+		animating = true
+	if bonus_t >= 0.0:
+		bonus_t += delta
+		if bonus_t > 0.9:
+			bonus_t = -1.0
 		animating = true
 	var speed := cell_pitch * 14.0 * delta
 	for i in fall_offset.size():
@@ -197,11 +277,45 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
+func _tick_clock(delta: float) -> void:
+	ms_acc += delta * 1000.0
+	var ms := int(ms_acc)
+	ms_acc -= ms
+	round_.advance(ms)
+	var left_s := int(ceil(round_.remaining_ms() / 1000.0))
+	if left_s <= 10 and left_s > 0 and left_s != last_tick_s:
+		_play("tick")
+	last_tick_s = left_s
+	if round_.is_over():
+		_finish()
+
+
+func _finish() -> void:
+	# Una cadena que se está arrastrando al terminar no cuenta.
+	dragging = false
+	chain = PackedInt32Array()
+	chain_state = "neutro"
+	screen = Screen.RESULT
+	games_played += 1
+	_play("fin")
+	_haptic("heavy")
+	if round_.score > best_score:
+		best_score = round_.score
+		new_best = round_.score > 0
+		_js("window.r32 && window.r32.setBest(%d)" % best_score)
+		if new_best:
+			_play("record")
+	queue_redraw()
+
+
 # --- Input -------------------------------------------------------------------
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed:
+		if screen != Screen.PLAYING:
+			if event.pressed:
+				_on_tap_overlay(event.position)
+		elif event.pressed:
 			_begin(event.position)
 		else:
 			_end()
@@ -209,6 +323,22 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and dragging:
 		_move(event.position)
 		accept_event()
+
+
+func _on_tap_overlay(pos: Vector2) -> void:
+	match screen:
+		Screen.START, Screen.RESULT:
+			if button_rect.has_point(pos):
+				_play("boton")
+				if screen == Screen.RESULT:
+					_new_round()
+					_layout()
+				screen = Screen.PLAYING
+				queue_redraw()
+		Screen.PAUSED:
+			_play("boton")
+			screen = Screen.PLAYING  # cualquier toque sigue
+			queue_redraw()
 
 
 func _begin(pos: Vector2) -> void:
@@ -276,14 +406,26 @@ func _end() -> void:
 		return
 	dragging = false
 	if board.is_valid_chain(chain):
-		fx_snapshot = board.cells.duplicate()
-		fx_cells = chain.duplicate()
-		fx_text_pos = _cell_center(chain[chain.size() - 1])
-		pending_fall = board.clear_chain(chain)
-		fx_t = 0.0
-		chains_cleared += 1
-		_play("clear_32")
-		_haptic("medium")
+		var snapshot := board.cells.duplicate()
+		var cells := chain.duplicate()
+		var res := round_.close_chain(chain)
+		if not res.is_empty():
+			fx_snapshot = snapshot
+			fx_cells = cells
+			fx_text_pos = _cell_center(cells[cells.size() - 1])
+			pending_fall = res["fall"]
+			fx_points = res["points"]
+			fx_combo = res["combo"]
+			fx_t = 0.0
+			if fx_combo > 10:
+				_play("combo")
+				_haptic("heavy")
+			else:
+				_play("clear_32")
+				_haptic("medium")
+			if res["bonus_ms"] > 0:
+				bonus_t = 0.0
+				_play("tiempo_extra")
 	chain = PackedInt32Array()
 	chain_state = "neutro"
 	queue_redraw()
@@ -311,10 +453,12 @@ func _cell_at(pos: Vector2, radius_ratio: float) -> int:
 
 func _spawn_particles() -> void:
 	var colors := [c("justo"), c("texto")]
+	var per_cell := PARTICLES_PER_CELL * (3 if fx_combo > 10 else 2) / 2  # 1,5 veces con combo
+	var cap := PARTICLES_MAX * (3 if fx_combo > 10 else 2) / 2
 	var k := 0
 	for i in fx_cells:
-		for j in PARTICLES_PER_CELL:
-			if particles.size() >= PARTICLES_MAX:
+		for j in per_cell:
+			if particles.size() >= cap:
 				return
 			var ang := fx_rng.randf() * TAU
 			var dist := fx_rng.randf_range(40.0, 70.0) * px
@@ -334,21 +478,50 @@ func _spawn_particles() -> void:
 
 func _draw() -> void:
 	var view := get_viewport_rect().size
-	draw_rect(Rect2(Vector2.ZERO, view), c("fondo"))
+	var bg := c("fondo")
+	if fx_combo > 10 and fx_t >= FX_GONE and fx_t < FX_GONE + FX_FLASH:
+		bg = c("panel")  # destello del fondo con combo
+	draw_rect(Rect2(Vector2.ZERO, view), bg)
 	_draw_header()
-	_draw_chain_line()
-	_draw_grid()
-	_draw_particles()
-	_draw_fx_text()
+	if screen == Screen.PLAYING or screen == Screen.RESULT:
+		_draw_chain_line()
+		_draw_grid()
+		_draw_particles()
+		_draw_fx_text()
+		_draw_bonus()
+	match screen:
+		Screen.START:
+			_draw_start()
+		Screen.PAUSED:
+			_draw_cover("Paused", "Tap to continue")
+		Screen.RESULT:
+			_draw_result()
+
+
+func _fmt_score(v: int) -> String:
+	var s := str(v)
+	var out := ""
+	while s.length() > 3:
+		out = "," + s.substr(s.length() - 3) + out
+		s = s.substr(0, s.length() - 3)
+	return s + out
 
 
 func _draw_header() -> void:
 	var cx := col_x + col_w * 0.5
 	var y0 := top_inset + col_w * 0.07
-	_text(font_ui, "SUM 32 · H0 TEST", Vector2(cx, y0), 12.0 * px, c("texto_suave"))
+	# Reloj a la izquierda, puntaje a la derecha.
+	var left_ms := round_.remaining_ms()
+	var secs := int(ceil(left_ms / 1000.0))
+	var clock_col := c("reloj_ultimos_10s") if secs <= 10 and screen == Screen.PLAYING else c("texto")
+	_text(font_ui, "TIME", Vector2(col_x + col_w * 0.14, y0), 11.0 * px, c("texto_suave"))
+	_text(font_num, str(secs), Vector2(col_x + col_w * 0.14, y0 + 30.0 * px), 26.0 * px, clock_col)
+	_text(font_ui, "SCORE", Vector2(score_pos.x, y0), 11.0 * px, c("texto_suave"))
+	_text(font_num, _fmt_score(round_.score), Vector2(score_pos.x, y0 + 30.0 * px), 22.0 * px, c("texto"))
+	# Indicador de suma al centro.
 	var box_w := col_w * 0.4
 	var box_h := col_w * 0.17
-	var box := Rect2(Vector2(cx - box_w * 0.5, y0 + col_w * 0.04), Vector2(box_w, box_h))
+	var box := Rect2(Vector2(cx - box_w * 0.5, y0 - col_w * 0.025), Vector2(box_w, box_h))
 	var spec: Dictionary = pal.get("indicador_suma", {}).get(chain_state, {})
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = c("indicador_suma/%s/fondo" % chain_state)
@@ -361,7 +534,14 @@ func _draw_header() -> void:
 		label = str(board.target)  # sin cadena: muestra el objetivo, apagado
 		label_col = c("texto_suave")
 	_text(font_num, label, box.get_center() + Vector2(0, box_h * 0.17), box_h * 0.5, label_col)
-	_text(font_ui, "Chains: %d" % chains_cleared, Vector2(cx, box.end.y + col_w * 0.075), 12.0 * px, c("texto_suave"))
+	# Combo vigente debajo, si lo hay.
+	var combo := round_.current_combo()
+	if screen == Screen.PLAYING and combo > 10:
+		_text(font_num, "×%s" % _combo_txt(combo), Vector2(cx, box.end.y + col_w * 0.08), 18.0 * px, c("justo"))
+
+
+func _combo_txt(tenths: int) -> String:
+	return str(tenths / 10) if tenths % 10 == 0 else "%d.%d" % [tenths / 10, tenths % 10]
 
 
 func _tile_state_for_chain() -> int:
@@ -453,18 +633,94 @@ func _draw_fx_text() -> void:
 		s = lerpf(1.15, 1.0, (t - 0.09) / 0.09)
 	var alpha := 1.0 if t < FX_TEXT - 0.15 else clampf((FX_TEXT - t) / 0.15, 0.0, 1.0)
 	var pos := fx_text_pos - Vector2(0, 24.0 * px * clampf(t / FX_TEXT, 0.0, 1.0))
-	var fsz := 44.0 * px * s
-	var fill := c("justo")
-	fill.a = alpha
-	var outline := c("fondo")
-	outline.a = alpha
-	var w := font_num.get_string_size("32!", HORIZONTAL_ALIGNMENT_LEFT, -1, int(fsz)).x
-	var at := pos + Vector2(-w * 0.5, fsz * 0.36)
-	draw_string_outline(font_num, at, "32!", HORIZONTAL_ALIGNMENT_LEFT, -1, int(fsz), int(8.0 * px), outline)
-	draw_string(font_num, at, "32!", HORIZONTAL_ALIGNMENT_LEFT, -1, int(fsz), fill)
+	var label := "32!" if fx_combo <= 10 else "32! ×" + _combo_txt(fx_combo)
+	_text_outlined(label, pos, 44.0 * px * s * (0.8 if fx_combo > 10 else 1.0), c("justo"), alpha)
+	# El puntaje vuela al marcador.
+	if t < FX_SCORE_FLY:
+		var k := ease(t / FX_SCORE_FLY, 2.0)
+		var from := fx_text_pos + Vector2(0, 30.0 * px)
+		var at := from.lerp(score_pos + Vector2(0, 20.0 * px), k)
+		_text_outlined("+%s" % _fmt_score(fx_points), at, 20.0 * px, c("texto"), 1.0 - k * 0.5)
+
+
+func _draw_bonus() -> void:
+	if bonus_t < 0.0:
+		return
+	var alpha := clampf(1.0 - (bonus_t - 0.5) / 0.4, 0.0, 1.0)
+	var at := Vector2(col_x + col_w * 0.14, top_inset + col_w * 0.07 + 55.0 * px - 14.0 * px * bonus_t)
+	_text_outlined("+%ds" % (round_.long_bonus_ms / 1000), at, 18.0 * px, c("justo"), alpha, font_ui)
+
+
+func _draw_panel(rect: Rect2) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = c("panel")
+	sb.set_corner_radius_all(int(16.0 * px))
+	draw_style_box(sb, rect)
+
+
+func _draw_button(label: String, center: Vector2) -> void:
+	var bsz := Vector2(col_w * 0.6, 52.0 * px)
+	button_rect = Rect2(center - bsz * 0.5, bsz)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = c("justo")
+	sb.set_corner_radius_all(int(14.0 * px))
+	draw_style_box(sb, button_rect)
+	_text(font_ui, label, center + Vector2(0, 7.0 * px), 20.0 * px, c("numero"))
+
+
+func _overlay_rect() -> Rect2:
+	return Rect2(Vector2(grid_origin.x, grid_origin.y), Vector2(grid_w, grid_w))
+
+
+func _draw_start() -> void:
+	var r := _overlay_rect()
+	_draw_panel(r)
+	var cx := r.get_center().x
+	_text(font_ui, "SUM 32", Vector2(cx, r.position.y + r.size.y * 0.26), 40.0 * px, c("texto"))
+	var secs := int(config.get("round_seconds", 60))
+	var lines := ["Link neighbours that", "add up to %d." % board.target, "Longer chains score more.", "%d seconds." % secs]
+	for k in lines.size():
+		_text(font_ui, lines[k], Vector2(cx, r.position.y + r.size.y * (0.38 + k * 0.065)), 12.0 * px, c("texto_suave"))
+	if best_score > 0:
+		_text(font_ui, "Best: " + _fmt_score(best_score), Vector2(cx, r.position.y + r.size.y * 0.66), 14.0 * px, c("texto"))
+	_draw_button("PLAY", Vector2(cx, r.position.y + r.size.y * 0.78))
+
+
+func _draw_cover(title: String, subtitle: String) -> void:
+	var r := _overlay_rect()
+	_draw_panel(r)  # tapa la grilla: pausar no sirve para pensar
+	_text(font_ui, title, r.get_center() + Vector2(0, -6.0 * px), 26.0 * px, c("texto"))
+	_text(font_ui, subtitle, r.get_center() + Vector2(0, 26.0 * px), 14.0 * px, c("texto_suave"))
+
+
+func _draw_result() -> void:
+	var r := _overlay_rect()
+	_draw_panel(r)
+	var cx := r.get_center().x
+	_text(font_ui, "TIME'S UP", Vector2(cx, r.position.y + r.size.y * 0.17), 15.0 * px, c("texto_suave"))
+	_text(font_num, _fmt_score(round_.score), Vector2(cx, r.position.y + r.size.y * 0.36), 44.0 * px, c("justo") if new_best else c("texto"))
+	if new_best:
+		_text(font_ui, "NEW BEST!", Vector2(cx, r.position.y + r.size.y * 0.46), 15.0 * px, c("justo"))
+	else:
+		_text(font_ui, "Best: " + _fmt_score(best_score), Vector2(cx, r.position.y + r.size.y * 0.46), 14.0 * px, c("texto_suave"))
+	_text(font_ui, "Chains: %d   Longest: %d" % [round_.chains, round_.best_chain], Vector2(cx, r.position.y + r.size.y * 0.58), 14.0 * px, c("texto"))
+	_draw_button("PLAY AGAIN", Vector2(cx, r.position.y + r.size.y * 0.78))
 
 
 func _text(font: Font, text: String, center_baseline: Vector2, size_px: float, color: Color) -> void:
 	var sz := int(size_px)
 	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
 	draw_string(font, center_baseline - Vector2(w * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, color)
+
+
+func _text_outlined(text: String, center: Vector2, size_px: float, fill: Color, alpha: float, font: Font = null) -> void:
+	if font == null:
+		font = font_num
+	var sz := int(size_px)
+	fill.a = alpha
+	var outline := c("fondo")
+	outline.a = alpha
+	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
+	var at := center + Vector2(-w * 0.5, sz * 0.36)
+	draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, int(8.0 * px), outline)
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, fill)

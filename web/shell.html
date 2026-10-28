@@ -125,6 +125,15 @@ $GODOT_HEAD_INCLUDE
       const a = tg.safeAreaInset || {}, b = tg.contentSafeAreaInset || {};
       return (a.top || 0) + (b.top || 0);
     },
+    getBest: function () {
+      try { return parseInt(localStorage.getItem('sum32_best') || '0', 10) || 0; } catch (e) { return 0; }
+    },
+    setBest: function (v) {
+      try { localStorage.setItem('sum32_best', String(v)); } catch (e) {}
+    },
+    isHidden: function () {
+      return document.hidden || !!(tg && tg.isActive === false);
+    },
     metrics: m,
   };
 }());
