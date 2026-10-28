@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
+<title>$GODOT_PROJECT_NAME</title>
+<script>window.R32_T0 = performance.now();</script>
+<script src="https://telegram.org/js/telegram-web-app.js?64"></script>
+<style>
+html, body, #canvas { margin: 0; padding: 0; border: 0; }
+body { color: #f3f0ff; background: #15121f; overflow: hidden; touch-action: none;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+#canvas { display: block; }
+#canvas:focus { outline: none; }
+#status { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 14px; background: #15121f; }
+#status .logo { font-size: 42px; font-weight: 800; letter-spacing: 2px; }
+#status .bar { width: 55%; height: 8px; border-radius: 4px; background: #2a2540; overflow: hidden; }
+#status .fill { height: 100%; width: 0; background: #8b5cf6; transition: width .15s; }
+#status .pct { font-size: 14px; color: #9a93b8; }
+#status-notice { display: none; margin: 0 24px; padding: 14px; border-radius: 8px; background: #5b3943; text-align: center; }
+#r32-btn { position: absolute; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 10;
+  width: 44px; height: 44px; border-radius: 22px; border: 1px solid #9a93b8; background: #2a2540cc;
+  color: #f3f0ff; font-size: 13px; font-weight: 700; }
+#r32-panel { display: none; position: absolute; left: 12px; right: 12px; bottom: calc(66px + env(safe-area-inset-bottom));
+  z-index: 11; padding: 14px 16px; border-radius: 12px; background: #0d0b14f2; border: 1px solid #8b5cf6;
+  font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+</style>
+$GODOT_HEAD_INCLUDE
+</head>
+<body>
+<canvas id="canvas">Your browser does not support the canvas tag.</canvas>
+<noscript>Your browser does not support JavaScript.</noscript>
+<div id="status">
+  <div class="logo">SUM 32</div>
+  <div class="bar"><div class="fill" id="status-fill"></div></div>
+  <div class="pct" id="status-pct">Loading…</div>
+  <div id="status-notice"></div>
+</div>
+<button id="r32-btn" type="button" aria-label="Load metrics">ms</button>
+<div id="r32-panel"></div>
+
+<script>
+// Puente con Telegram y panel de medición de H0 (Ronda 32).
+(function () {
+  const tg = (window.Telegram && window.Telegram.WebApp) || null;
+  const inTelegram = !!(tg && tg.initData);
+  const m = { shell: window.R32_T0, script: performance.now(), engine: null, first: null,
+    fpsSamples: [], dragFpsMin: null, dragFpsSamples: [] };
+
+  if (tg) {
+    try {
+      tg.ready();
+      tg.expand();
+      if (tg.isVersionAtLeast && tg.isVersionAtLeast('7.7')) tg.disableVerticalSwipes();
+      if (tg.isVersionAtLeast && tg.isVersionAtLeast('6.1')) { tg.setHeaderColor('#15121f'); tg.setBackgroundColor('#15121f'); }
+    } catch (e) { console.warn('Telegram init', e); }
+  }
+
+  function fmt(ms) { return ms == null ? '—' : (ms / 1000).toFixed(2) + ' s'; }
+
+  function transferred() {
+    let net = 0, body = 0, wasmCached = null;
+    const entries = performance.getEntriesByType('navigation').concat(performance.getEntriesByType('resource'));
+    for (const e of entries) {
+      net += e.transferSize || 0;
+      body += e.encodedBodySize || 0;
+      if (/\.wasm(\?|$)/.test(e.name)) wasmCached = (e.transferSize === 0 && e.decodedBodySize > 0);
+    }
+    return { net: net / 1048576, body: body / 1048576, wasmCached };
+  }
+
+  function avg(a) { return a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null; }
+
+  function render() {
+    const t = transferred();
+    const lines = [
+      'SUM 32 · H0 load metrics',
+      '',
+      'Screen visible : ' + fmt(m.script),
+      'Engine ready   : ' + fmt(m.engine),
+      'First frame    : ' + fmt(m.first),
+      '',
+      'Downloaded     : ' + t.net.toFixed(2) + ' MB' + (t.wasmCached ? ' (engine from cache)' : ''),
+      'Compressed size: ' + t.body.toFixed(2) + ' MB',
+      'FPS average    : ' + (avg(m.fpsSamples) ?? '—'),
+      'FPS dragging   : ' + (avg(m.dragFpsSamples) ?? '—') + ' avg / ' + (m.dragFpsMin ?? '—') + ' min',
+      '',
+      'Telegram       : ' + (inTelegram ? (tg.platform + ' · Bot API ' + tg.version) : 'no (browser)'),
+      'Screen         : ' + screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1),
+      'Device         : ' + navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 110),
+    ];
+    document.getElementById('r32-panel').textContent = lines.join('\n');
+  }
+
+  document.getElementById('r32-btn').addEventListener('click', function () {
+    const p = document.getElementById('r32-panel');
+    const show = p.style.display !== 'block';
+    if (show) render();
+    p.style.display = show ? 'block' : 'none';
+  });
+
+  // Funciones que llama Godot por JavaScriptBridge.
+  window.r32 = {
+    onGodotReady: function () {},
+    onFirstFrame: function () { if (m.first == null) m.first = performance.now(); },
+    reportFps: function (fps, dragging) {
+      if (m.first == null) return;
+      m.fpsSamples.push(fps);
+      if (m.fpsSamples.length > 120) m.fpsSamples.shift();
+      if (dragging) {
+        m.dragFpsSamples.push(fps);
+        m.dragFpsMin = m.dragFpsMin == null ? fps : Math.min(m.dragFpsMin, fps);
+      }
+    },
+    haptic: function (kind) {
+      if (!tg || !tg.HapticFeedback || !(tg.isVersionAtLeast && tg.isVersionAtLeast('6.1'))) return;
+      try {
+        if (kind === 'success') tg.HapticFeedback.notificationOccurred('success');
+        else tg.HapticFeedback.impactOccurred('light');
+      } catch (e) {}
+    },
+    topInsetCss: function () {
+      if (!tg || !tg.isFullscreen) return 0;
+      const a = tg.safeAreaInset || {}, b = tg.contentSafeAreaInset || {};
+      return (a.top || 0) + (b.top || 0);
+    },
+    metrics: m,
+  };
+}());
+</script>
+
+<script src="$GODOT_URL"></script>
+<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+  const status = document.getElementById('status');
+  const fill = document.getElementById('status-fill');
+  const pct = document.getElementById('status-pct');
+  const notice = document.getElementById('status-notice');
+
+  function fail(err) {
+    console.error(err);
+    notice.textContent = (err && err.message) ? err.message : String(err);
+    notice.style.display = 'block';
+  }
+
+  const missing = Engine.getMissingFeatures({ threads: GODOT_THREADS_ENABLED });
+  if (missing.length !== 0) {
+    fail('Missing browser features:\n' + missing.join('\n'));
+    return;
+  }
+  engine.startGame({
+    onProgress: function (current, total) {
+      if (current > 0 && total > 0) {
+        const p = Math.min(100, Math.round(current / total * 100));
+        fill.style.width = p + '%';
+        pct.textContent = p + '%';
+      }
+    },
+  }).then(function () {
+    window.r32.metrics.engine = performance.now();
+    status.remove();
+  }, fail);
+}());
+</script>
+</body>
+</html>

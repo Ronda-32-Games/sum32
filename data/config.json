@@ -1,0 +1,22 @@
+{
+  "_comment": "Parámetros de balance de Sum 32 (GDD, sección Parámetros). Los lee el cliente y, desde H2, el servidor. Cambiar un valor del Daily solo entre días.",
+  "grid_size": 6,
+  "target_sum": 32,
+  "value_min": 3,
+  "value_max": 12,
+  "adjacency": "orthogonal",
+  "round_seconds": 60,
+  "points_factor": 10,
+  "combo_window_s": 3,
+  "combo_step_tenths": 5,
+  "combo_max_tenths": 30,
+  "long_chain_len": 6,
+  "long_chain_bonus_s": 2,
+  "daily_free_attempts": 3,
+  "daily_ad_attempts": 2,
+  "weekly_best_days": 5,
+  "interstitial_every": 3,
+  "ad_free_first_runs": 3,
+  "hint_duration_s": 2,
+  "continue_seconds": 15
+}
