@@ -41,12 +41,55 @@ $GODOT_HEAD_INCLUDE
 <div id="r32-panel"></div>
 
 <script>
-// Puente con Telegram y panel de medición de H0 (Ronda 32).
+// Puente con Telegram, parámetros de prueba y panel de medición (Ronda 32).
 (function () {
   const tg = (window.Telegram && window.Telegram.WebApp) || null;
   const inTelegram = !!(tg && tg.initData);
   const m = { shell: window.R32_T0, script: performance.now(), engine: null, first: null,
     fpsSamples: [], dragFpsMin: null, dragFpsSamples: [] };
+  const BIG_MB = 5;  // más que esto bajado = el motor vino de internet (DEC-034)
+
+  // Parámetros de prueba. En el navegador van en la dirección (?seed=32&round=5&slow=10&cold=1&test=1).
+  // Dentro de Telegram, el link t.me/<bot>/sum32?startapp=test_seed32_round5_slow10_cold llega
+  // como start_param (o tgWebAppStartParam en la dirección).
+  function readParams() {
+    const q = new URLSearchParams(location.search);
+    const h = new URLSearchParams(location.hash.replace(/^#/, ''));
+    let start = '';
+    try { start = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || ''; } catch (e) {}
+    start = start || q.get('tgWebAppStartParam') || h.get('tgWebAppStartParam') || '';
+    const p = { test: false, cold: false, seed: null, round: null, slow: null, start: start };
+    function num(v) { return (v != null && /^\d+$/.test(String(v))) ? parseInt(v, 10) : null; }
+    for (const tok of start.toLowerCase().split(/[_\-]+/)) {
+      let mm;
+      if (tok === 'test') p.test = true;
+      else if (tok === 'cold') p.cold = true;
+      else if ((mm = tok.match(/^seed(\d+)$/))) p.seed = num(mm[1]);
+      else if ((mm = tok.match(/^round(\d+)$/))) p.round = num(mm[1]);
+      else if ((mm = tok.match(/^slow(\d+)$/))) p.slow = num(mm[1]);
+    }
+    if (q.has('test')) p.test = true;
+    if (q.has('cold')) p.cold = true;
+    if (num(q.get('seed')) != null) p.seed = num(q.get('seed'));
+    if (num(q.get('round')) != null) p.round = num(q.get('round'));
+    if (num(q.get('slow')) != null) p.slow = num(q.get('slow'));
+    if (p.round != null && p.round < 1) p.round = null;
+    if (p.slow != null && p.slow < 1) p.slow = null;
+    // Cualquier parámetro implica modo de prueba.
+    if (p.cold || p.seed != null || p.round != null || p.slow != null) p.test = true;
+    return p;
+  }
+  const P = readParams();
+
+  // Modo frío (BUG-005): fuerza a bajar el motor y el juego de internet, salteando la caché.
+  if (P.cold && window.fetch) {
+    const origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input : ((input && input.url) || '');
+      if (/\.(wasm|pck)(\?|$)/.test(url)) init = Object.assign({}, init || {}, { cache: 'reload' });
+      return origFetch(input, init);
+    };
+  }
 
   if (tg) {
     try {
@@ -60,14 +103,24 @@ $GODOT_HEAD_INCLUDE
   function fmt(ms) { return ms == null ? '—' : (ms / 1000).toFixed(2) + ' s'; }
 
   function transferred() {
-    let net = 0, body = 0, wasmCached = null;
+    let net = 0, body = 0, reported = false, wasm = null;
     const entries = performance.getEntriesByType('navigation').concat(performance.getEntriesByType('resource'));
     for (const e of entries) {
       net += e.transferSize || 0;
       body += e.encodedBodySize || 0;
-      if (/\.wasm(\?|$)/.test(e.name)) wasmCached = (e.transferSize === 0 && e.decodedBodySize > 0);
+      if (e.transferSize > 0) reported = true;
+      if (/\.wasm(\?|$)/.test(e.name)) wasm = e;
     }
-    return { net: net / 1048576, body: body / 1048576, wasmCached };
+    // De dónde vino el motor: se decide por lo que bajó el .wasm, no por un 0 exacto,
+    // porque una revalidación (304) baja unos cientos de bytes y no es carga en frío.
+    let engineFrom = 's/d';
+    if (wasm && reported) {
+      const mb = (wasm.transferSize || 0) / 1048576;
+      if (mb > BIG_MB) engineFrom = 'network (' + mb.toFixed(1) + ' MB)';
+      else if (mb < 1) engineFrom = 'cache';
+      else engineFrom = 'unclear (' + mb.toFixed(1) + ' MB)';
+    }
+    return { net: net / 1048576, body: body / 1048576, engineFrom: engineFrom };
   }
 
   function avg(a) { return a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null; }
@@ -75,13 +128,15 @@ $GODOT_HEAD_INCLUDE
   function render() {
     const t = transferred();
     const lines = [
-      'SUM 32 · H0 load metrics',
+      'SUM 32 · load metrics',
+      'Mode           : ' + (P.test ? 'test' + (P.start ? ' (' + P.start + ')' : '') : 'normal') + (P.cold ? ' · cold forced' : ''),
       '',
       'Screen visible : ' + fmt(m.script),
       'Engine ready   : ' + fmt(m.engine),
       'First frame    : ' + fmt(m.first),
       '',
-      'Downloaded     : ' + t.net.toFixed(2) + ' MB' + (t.wasmCached ? ' (engine from cache)' : ''),
+      'Engine         : ' + t.engineFrom,
+      'Downloaded     : ' + t.net.toFixed(2) + ' MB',
       'Compressed size: ' + t.body.toFixed(2) + ' MB',
       'FPS average    : ' + (avg(m.fpsSamples) ?? '—'),
       'FPS dragging   : ' + (avg(m.dragFpsSamples) ?? '—') + ' avg / ' + (m.dragFpsMin ?? '—') + ' min',
@@ -135,6 +190,8 @@ $GODOT_HEAD_INCLUDE
       return document.hidden || !!(tg && tg.isActive === false);
     },
     metrics: m,
+    params: P,
+    engineFrom: function () { return transferred().engineFrom; },
   };
 }());
 </script>

@@ -63,6 +63,14 @@ jobs:
           test -f build/web/index.wasm
           ls -la build/web
 
+      - name: Install browser for web tests
+        run: |
+          pip install playwright==1.63.0
+          python -m playwright install --with-deps chromium
+
+      - name: Run web tests
+        run: timeout 900 python -I tests/web/test_shell.py build/web
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
