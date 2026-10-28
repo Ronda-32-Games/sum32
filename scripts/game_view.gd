@@ -30,6 +30,9 @@ var grid_origin := Vector2.ZERO
 var cell_pitch := 100.0
 var cell_size := 92.0
 var top_inset := 0.0
+## Columna central donde vive todo: en pantallas anchas el juego no se estira.
+var col_x := 0.0
+var col_w := 720.0
 
 # Animación: desplazamiento vertical pendiente por casilla y destello de borrado.
 var fall_offset := PackedFloat32Array()
@@ -80,13 +83,15 @@ func _layout() -> void:
 	var css_h = _js("window.innerHeight || 0")
 	if css_top != null and css_h != null and float(css_h) > 0.0:
 		top_inset = float(css_top) * view.y / float(css_h)
-	var side_margin := view.x * 0.05
-	var grid_w := minf(view.x - side_margin * 2.0, view.y * 0.62)
+	col_w = minf(view.x, (view.y - top_inset) * 0.6)
+	col_x = (view.x - col_w) * 0.5
+	var header_h := col_w * 0.42
+	var avail_h := view.y - top_inset - header_h - col_w * 0.06
+	var grid_w := minf(col_w * 0.9, avail_h)
 	cell_pitch = grid_w / board.size
 	cell_size = cell_pitch * 0.9
-	var header_h := view.y * 0.2
-	var free_h := view.y - top_inset - header_h
-	grid_origin = Vector2((view.x - grid_w) * 0.5, top_inset + header_h + maxf(0.0, (free_h - grid_w) * 0.35))
+	var extra := maxf(0.0, avail_h - grid_w)
+	grid_origin = Vector2((view.x - grid_w) * 0.5, top_inset + header_h + extra * 0.3)
 	queue_redraw()
 
 
@@ -213,15 +218,16 @@ func _draw() -> void:
 
 
 func _draw_header(view: Vector2) -> void:
-	var y0 := top_inset + view.y * 0.035
-	_text_centered("SUM 32 · H0 TEST", Vector2(view.x * 0.5, y0), int(view.x * 0.035), COL_DIM)
+	var cx := col_x + col_w * 0.5
+	var y0 := top_inset + col_w * 0.07
+	_text_centered("SUM 32 · H0 TEST", Vector2(cx, y0), int(col_w * 0.035), COL_DIM)
 	var s := board.chain_sum(chain) if chain.size() > 0 else 0
 	var state := "idle"
 	if chain.size() > 0:
 		state = "ok" if s == board.target else ("over" if s > board.target else "building")
-	var box_w := view.x * 0.36
-	var box_h := view.x * 0.17
-	var box := Rect2(Vector2((view.x - box_w) * 0.5, y0 + view.x * 0.04), Vector2(box_w, box_h))
+	var box_w := col_w * 0.36
+	var box_h := col_w * 0.17
+	var box := Rect2(Vector2(cx - box_w * 0.5, y0 + col_w * 0.04), Vector2(box_w, box_h))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = COL_CELL
 	sb.set_corner_radius_all(int(box_h * 0.25))
@@ -250,7 +256,7 @@ func _draw_header(view: Vector2) -> void:
 	elif state == "over":
 		col = COL_OVER
 	_text_centered(label, box.get_center() + Vector2(0, box_h * 0.18), int(box_h * 0.55), col)
-	_text_centered("Chains: %d" % chains_cleared, Vector2(view.x * 0.5, box.end.y + view.x * 0.06), int(view.x * 0.035), COL_DIM)
+	_text_centered("Chains: %d" % chains_cleared, Vector2(cx, box.end.y + col_w * 0.07), int(col_w * 0.035), COL_DIM)
 
 
 func _draw_grid() -> void:
@@ -260,6 +266,8 @@ func _draw_grid() -> void:
 			var i := board.index(r, c)
 			var pos := grid_origin + Vector2(c * cell_pitch, r * cell_pitch - fall_offset[i])
 			pos += Vector2.ONE * (cell_pitch - cell_size) * 0.5
+			if pos.y < grid_origin.y - cell_pitch * 0.25:
+				continue  # todavía cayendo desde fuera de la grilla: no tapa el cartel
 			var rect := Rect2(pos, Vector2(cell_size, cell_size))
 			var v: int = board.cells[i]
 			var sb := StyleBoxFlat.new()
