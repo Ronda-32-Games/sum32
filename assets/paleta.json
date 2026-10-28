@@ -1,0 +1,29 @@
+{
+  "_doc": "Paleta de Sum 32 v1 (Lía, 27/10/2026). Colores en hex. Bruno la carga como datos; cambiar un color no toca código.",
+  "fondo": "#151A2D",
+  "panel": "#232A45",
+  "texto": "#F2EDE3",
+  "texto_suave": "#F2EDE3B3",
+  "casilla": "#F2EDE3",
+  "casilla_base": "#C9C2B4",
+  "casilla_base_activa": "#232A45",
+  "numero": "#151A2D",
+  "cadena": "#5EA2FF",
+  "justo": "#C5F04A",
+  "pasado": "#FF5A47",
+  "linea_cadena": { "cadena": "#5EA2FF", "justo": "#C5F04A", "pasado": "#FF5A47" },
+  "indicador_suma": {
+    "neutro": { "fondo": "#232A45", "texto": "#F2EDE3", "formato": "{suma}" },
+    "justo":  { "fondo": "#C5F04A", "texto": "#151A2D", "formato": "32!" },
+    "pasado": { "fondo": "#FF5A47", "texto": "#151A2D", "formato": "{suma} ×" }
+  },
+  "reloj_ultimos_10s": "#FF5A47",
+  "encabezado_telegram": "#151A2D",
+  "_opcional_tono_por_rango": {
+    "_doc": "Propuesta de Tomi para el playtest de H1. Apagada por defecto: usar_tonos=false.",
+    "usar_tonos": false,
+    "bajo_3_a_5": "#F7EBDD",
+    "medio_6_a_9": "#F2EDE3",
+    "alto_10_a_12": "#E6E9EE"
+  }
+}
