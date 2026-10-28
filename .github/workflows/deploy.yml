@@ -55,6 +55,8 @@ jobs:
         run: |
           timeout 300 ~/godot/godot --headless -s tests/run_tests.gd | tee test.log
           grep -q "RESULT: OK" test.log
+          timeout 300 ~/godot/godot --headless -s tests/run_view_tests.gd | tee view.log
+          grep -q "RESULT: OK" view.log
 
       - name: Export web build
         run: |
@@ -65,11 +67,12 @@ jobs:
 
       - name: Install browser for web tests
         run: |
-          pip install playwright==1.63.0
-          python -m playwright install --with-deps chromium
+          python -m venv ~/webtest
+          ~/webtest/bin/pip install -q playwright==1.63.0
+          ~/webtest/bin/python -m playwright install --with-deps chromium
 
       - name: Run web tests
-        run: timeout 900 python -I tests/web/test_shell.py build/web
+        run: timeout 900 ~/webtest/bin/python tests/web/test_shell.py build/web
 
       - uses: actions/configure-pages@v5
 

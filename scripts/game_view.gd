@@ -26,6 +26,14 @@ const FX_GONE := 0.26
 const FX_TEXT := 0.60
 const FX_SCORE_FLY := 0.40
 const FX_FLASH := 0.12
+# BUG-004: un cuadro más largo que esto es que la app estuvo afuera; y el reloj nunca
+# descuenta más que MAX_TICK_MS por cuadro.
+const AWAY_S := 1.0
+const MAX_TICK_MS := 250.0
+# BUG-001: el resultado no se puede saltear durante este tiempo (segundos reales).
+const RESULT_GUARD_S := 0.8
+# BUG-002: una casilla se puede tocar cuando le falta caer menos que esto (fracción de casilla).
+const SETTLED := 0.15
 const PARTICLES_PER_CELL := 6
 const PARTICLES_MAX := 48
 
@@ -62,7 +70,6 @@ var col_x := 0.0
 var col_w := 720.0
 var px := 2.0  # cuántas unidades del juego mide 1 px de un celular de 360 de ancho
 var score_pos := Vector2.ZERO
-var button_rect := Rect2()
 
 # Animaciones.
 var fall_offset := PackedFloat32Array()
@@ -79,7 +86,7 @@ var fx_rng := RandomNumberGenerator.new()
 
 var frames := 0
 var fps_timer := 0.0
-var hidden_poll := 0.0
+var result_age := 0.0  # segundos reales desde que salió TIME'S UP
 
 
 func _ready() -> void:
@@ -231,17 +238,23 @@ func _process(delta: float) -> void:
 	if fps_timer >= 0.5:
 		fps_timer = 0.0
 		_js("window.r32 && window.r32.reportFps(%d, %s)" % [Engine.get_frames_per_second(), "true" if dragging else "false"])
-	# La app pasó a segundo plano (llamada, otro chat): pausa y tapa la grilla.
-	hidden_poll += delta
-	if hidden_poll >= 0.25:
-		hidden_poll = 0.0
-		# El puente devuelve los booleanos de JavaScript como 0 o 1.
-		var hid = _js("window.r32 ? window.r32.isHidden() : 0")
-		if hid != null and bool(hid):
-			_pause()
-
+	var real_delta := delta / maxf(Engine.time_scale, 0.0001)
 	if screen == Screen.PLAYING:
-		_tick_clock(delta)
+		# BUG-004: con la página oculta el navegador no da cuadros, así que no alcanza con
+		# preguntar si está oculta: la página deja una marca al ocultarse y acá se lee.
+		# Si igual llega un cuadro larguísimo, es que estuvo afuera: pausa sin descontar.
+		var hid = _js("window.r32 ? window.r32.consumeHidden() : 0")  # booleanos llegan como 0 o 1
+		if real_delta > AWAY_S or (hid != null and bool(hid)):
+			_pause()
+		else:
+			_tick_clock(delta)
+		# BUG-003: dedo apoyado esperando que termine el efecto o que llegue la casilla.
+		if dragging and chain.size() == 0 and screen == Screen.PLAYING:
+			_try_start(last_pointer)
+	elif screen == Screen.RESULT:
+		result_age += real_delta
+		if result_age < RESULT_GUARD_S + 0.1:
+			queue_redraw()
 
 	var animating := screen == Screen.PLAYING
 	if fx_t >= 0.0:
@@ -278,7 +291,7 @@ func _process(delta: float) -> void:
 
 
 func _tick_clock(delta: float) -> void:
-	ms_acc += delta * 1000.0
+	ms_acc += minf(delta * 1000.0, MAX_TICK_MS)
 	var ms := int(ms_acc)
 	ms_acc -= ms
 	round_.advance(ms)
@@ -296,6 +309,7 @@ func _finish() -> void:
 	chain = PackedInt32Array()
 	chain_state = "neutro"
 	screen = Screen.RESULT
+	result_age = 0.0
 	games_played += 1
 	_play("fin")
 	_haptic("heavy")
@@ -328,7 +342,10 @@ func _gui_input(event: InputEvent) -> void:
 func _on_tap_overlay(pos: Vector2) -> void:
 	match screen:
 		Screen.START, Screen.RESULT:
-			if button_rect.has_point(pos):
+			# BUG-001: el resultado queda a la vista un momento antes de poder saltearlo.
+			if screen == Screen.RESULT and result_age < RESULT_GUARD_S:
+				return
+			if _button_rect().has_point(pos):
 				_play("boton")
 				if screen == Screen.RESULT:
 					_new_round()
@@ -342,15 +359,21 @@ func _on_tap_overlay(pos: Vector2) -> void:
 
 
 func _begin(pos: Vector2) -> void:
-	if fx_t >= 0.0 and fx_t < FX_GONE:
-		return  # la cadena anterior todavía se está yendo
+	# BUG-003: el dedo queda apoyado aunque todavía no se pueda empezar (efecto del ¡32!
+	# o casilla cayendo); la cadena arranca sola apenas se puede, sin levantar el dedo.
+	dragging = true
+	chain = PackedInt32Array()
+	chain_state = "neutro"
+	last_pointer = pos
+	_try_start(pos)
+
+
+func _try_start(pos: Vector2) -> void:
 	var i := _cell_at(pos, 0.48)
 	if i < 0:
 		return
-	dragging = true
 	chain = PackedInt32Array([i])
 	chain_state = "neutro"
-	last_pointer = pos
 	_on_chain_changed(true)
 
 
@@ -360,6 +383,9 @@ func _move(pos: Vector2) -> void:
 	var steps := maxi(1, int(dist / (cell_pitch * 0.2)))
 	for s in range(1, steps + 1):
 		var p := last_pointer.lerp(pos, float(s) / steps)
+		if chain.size() == 0:
+			_try_start(p)
+			continue
 		var i := _cell_at(p, 0.4)
 		if i >= 0:
 			_try_add(i)
@@ -439,16 +465,22 @@ func _cell_center(i: int) -> Vector2:
 	return grid_origin + Vector2((board.col_of(i) + 0.5) * cell_pitch, (board.row_of(i) + 0.5) * cell_pitch)
 
 
+## Casilla bajo el dedo, según donde se VE (BUG-002). Mientras la cadena anterior se va,
+## o si la casilla todavía está cayendo, no hay casilla para tocar.
 func _cell_at(pos: Vector2, radius_ratio: float) -> int:
-	var local := pos - grid_origin
-	var col := int(floor(local.x / cell_pitch))
-	var row := int(floor(local.y / cell_pitch))
-	if col < 0 or row < 0 or col >= board.size or row >= board.size:
+	if fx_t >= 0.0 and fx_t < FX_GONE:
+		return -1  # se ve la grilla vieja; la nueva todavía no apareció
+	var col := int(floor((pos.x - grid_origin.x) / cell_pitch))
+	if col < 0 or col >= board.size:
 		return -1
-	var center := grid_origin + Vector2((col + 0.5) * cell_pitch, (row + 0.5) * cell_pitch)
-	if pos.distance_to(center) > cell_pitch * radius_ratio:
-		return -1  # solo cuenta el centro de la casilla: evita diagonales accidentales
-	return board.index(row, col)
+	for row in board.size:
+		var i := board.index(row, col)
+		if fall_offset[i] > cell_pitch * SETTLED:
+			continue
+		var center := _cell_center(i) - Vector2(0, fall_offset[i])
+		if pos.distance_to(center) <= cell_pitch * radius_ratio:
+			return i  # solo cuenta el centro de la casilla: evita diagonales accidentales
+	return -1
 
 
 func _spawn_particles() -> void:
@@ -658,14 +690,22 @@ func _draw_panel(rect: Rect2) -> void:
 	draw_style_box(sb, rect)
 
 
-func _draw_button(label: String, center: Vector2) -> void:
+## Rectángulo del botón de las pantallas de inicio y resultado (lo usan el dibujo y el toque).
+func _button_rect() -> Rect2:
+	var r := _overlay_rect()
 	var bsz := Vector2(col_w * 0.6, 52.0 * px)
-	button_rect = Rect2(center - bsz * 0.5, bsz)
+	var center := Vector2(r.get_center().x, r.position.y + r.size.y * 0.78)
+	return Rect2(center - bsz * 0.5, bsz)
+
+
+func _draw_button(label: String) -> void:
+	var rect := _button_rect()
+	var ready := not (screen == Screen.RESULT and result_age < RESULT_GUARD_S)
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = c("justo")
+	sb.bg_color = c("justo") if ready else c("justo").darkened(0.45)
 	sb.set_corner_radius_all(int(14.0 * px))
-	draw_style_box(sb, button_rect)
-	_text(font_ui, label, center + Vector2(0, 7.0 * px), 20.0 * px, c("numero"))
+	draw_style_box(sb, rect)
+	_text(font_ui, label, rect.get_center() + Vector2(0, 7.0 * px), 20.0 * px, c("numero"))
 
 
 func _overlay_rect() -> Rect2:
@@ -683,7 +723,7 @@ func _draw_start() -> void:
 		_text(font_ui, lines[k], Vector2(cx, r.position.y + r.size.y * (0.38 + k * 0.065)), 12.0 * px, c("texto_suave"))
 	if best_score > 0:
 		_text(font_ui, "Best: " + _fmt_score(best_score), Vector2(cx, r.position.y + r.size.y * 0.66), 14.0 * px, c("texto"))
-	_draw_button("PLAY", Vector2(cx, r.position.y + r.size.y * 0.78))
+	_draw_button("PLAY")
 
 
 func _draw_cover(title: String, subtitle: String) -> void:
@@ -704,7 +744,7 @@ func _draw_result() -> void:
 	else:
 		_text(font_ui, "Best: " + _fmt_score(best_score), Vector2(cx, r.position.y + r.size.y * 0.46), 14.0 * px, c("texto_suave"))
 	_text(font_ui, "Chains: %d   Longest: %d" % [round_.chains, round_.best_chain], Vector2(cx, r.position.y + r.size.y * 0.58), 14.0 * px, c("texto"))
-	_draw_button("PLAY AGAIN", Vector2(cx, r.position.y + r.size.y * 0.78))
+	_draw_button("PLAY AGAIN")
 
 
 func _text(font: Font, text: String, center_baseline: Vector2, size_px: float, color: Color) -> void:
