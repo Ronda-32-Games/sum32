@@ -1,0 +1,14 @@
+{
+  "_doc": "Sonidos de Sum 32 v1. Generados por Lía con síntesis propia (synth.py en esta carpeta), sin muestras de terceros. Licencia: CC0 1.0, dominio público, dedicados por Ronda 32. OGG Vorbis mono 22,05 kHz. volumen_db es el punto de partida para el bus de efectos.",
+  "toque":        { "archivo": "toque.ogg",        "cuando": "se suma una casilla a la cadena", "volumen_db": -10, "tono": "pitch_scale = 2^(n/12) con n = casillas en la cadena - 1, tope n = 9" },
+  "justo":        { "archivo": "justo.ogg",        "cuando": "la suma llega a 32 antes de soltar", "volumen_db": -6 },
+  "pasado":       { "archivo": "pasado.ogg",       "cuando": "la suma pasa de 32 (una vez por cruce, no por casilla)", "volumen_db": -12 },
+  "clear_32":     { "archivo": "clear_32.ogg",     "cuando": "se borra una cadena en 32, combo x1", "volumen_db": -4 },
+  "combo":        { "archivo": "combo.ogg",        "cuando": "se borra una cadena con combo x1,5 o más", "volumen_db": -4 },
+  "tiempo_extra": { "archivo": "tiempo_extra.ogg", "cuando": "cadena larga suma segundos", "volumen_db": -8 },
+  "tick":         { "archivo": "tick.ogg",         "cuando": "cada segundo en los últimos 10", "volumen_db": -14 },
+  "fin":          { "archivo": "fin.ogg",          "cuando": "el reloj llega a cero", "volumen_db": -6 },
+  "record":       { "archivo": "record.ogg",       "cuando": "récord personal o duelo ganado", "volumen_db": -4 },
+  "boton":        { "archivo": "boton.ogg",        "cuando": "toques de interfaz", "volumen_db": -16 },
+  "musica_loop_base": { "archivo": "musica_loop_base.ogg", "cuando": "Home y Resultado; nunca durante la partida (propuesta, decide Ignacio)", "volumen_db": -18, "loop": true, "bpm": 96, "duracion_s": 20 }
+}
