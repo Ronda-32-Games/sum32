@@ -87,6 +87,11 @@ var fx_rng := RandomNumberGenerator.new()
 var frames := 0
 var fps_timer := 0.0
 var result_age := 0.0  # segundos reales desde que salió TIME'S UP
+var last_frame_ms := -1  # reloj real del cuadro anterior (BUG-004)
+var test_mode := false
+var record_enabled := true
+var test_label: Array = []
+var state_timer := 0.0
 
 
 func _ready() -> void:
@@ -98,18 +103,7 @@ func _ready() -> void:
 	font_ui = _load_font("res://assets/fuentes/MartianMono-Medium-UI.ttf")
 	_load_sounds()
 	seed_base = int(Time.get_unix_time_from_system() * 1000.0) & Mulberry32.MASK
-	# Para pruebas (Nahir): ?seed=123 en la dirección repite siempre la misma grilla.
-	var url_seed = _js("new URLSearchParams(location.search).get('seed') || ''")
-	if url_seed is String and (url_seed as String).is_valid_int():
-		seed_base = int(url_seed) & Mulberry32.MASK
-	# Para revisar animaciones (Lía, Nahir): ?slow=10 corre todo 10 veces más lento.
-	var url_slow = _js("new URLSearchParams(location.search).get('slow') || ''")
-	if url_slow is String and (url_slow as String).is_valid_float() and float(url_slow) >= 1.0:
-		Engine.time_scale = 1.0 / float(url_slow)
-	# Para pruebas (Nahir): ?round=5 acorta la partida a 5 segundos.
-	var url_round = _js("new URLSearchParams(location.search).get('round') || ''")
-	if url_round is String and (url_round as String).is_valid_int() and int(url_round) > 0:
-		config["round_seconds"] = int(url_round)
+	_read_test_params()
 	var saved = _js("window.r32 ? window.r32.getBest() : 0")
 	best_score = int(saved) if saved != null else 0
 	_new_round()
@@ -117,6 +111,30 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	_js("window.r32 && window.r32.onGodotReady()")
+
+
+## Modo de prueba (TASK-036, BUG-006). Los parámetros los arma la página: en el navegador
+## vienen en la dirección (?seed=32&round=5&slow=10&test=1) y dentro de Telegram en
+## startapp (t.me/ronda32games_bot/sum32?startapp=test_seed32_round5_slow10).
+## Con seed, round o slow la partida no guarda récord.
+func _read_test_params() -> void:
+	var raw = _js("JSON.stringify(window.r32 ? window.r32.params : {})")
+	var p = JSON.parse_string(raw) if raw is String else null
+	if not (p is Dictionary):
+		return
+	test_mode = bool(p.get("test", false))
+	if p.get("seed") != null:
+		seed_base = int(p["seed"]) & Mulberry32.MASK
+		record_enabled = false
+		test_label.append("seed %d" % int(p["seed"]))
+	if p.get("round") != null and int(p["round"]) > 0:
+		config["round_seconds"] = int(p["round"])
+		record_enabled = false
+		test_label.append("%ds" % int(p["round"]))
+	if p.get("slow") != null and int(p["slow"]) >= 1:
+		Engine.time_scale = 1.0 / float(p["slow"])
+		record_enabled = false
+		test_label.append("slow x%d" % int(p["slow"]))
 
 
 func _new_round() -> void:
@@ -239,12 +257,22 @@ func _process(delta: float) -> void:
 		fps_timer = 0.0
 		_js("window.r32 && window.r32.reportFps(%d, %s)" % [Engine.get_frames_per_second(), "true" if dragging else "false"])
 	var real_delta := delta / maxf(Engine.time_scale, 0.0001)
+	# Godot recorta los saltos largos de delta, así que el tiempo afuera se mide con el
+	# reloj real entre cuadros.
+	var now_ms := Time.get_ticks_msec()
+	var wall_gap_s := 0.0 if last_frame_ms < 0 else (now_ms - last_frame_ms) / 1000.0
+	last_frame_ms = now_ms
+	if test_mode:
+		state_timer += real_delta
+		if state_timer >= 0.1:
+			state_timer = 0.0
+			_publish_state()
 	if screen == Screen.PLAYING:
 		# BUG-004: con la página oculta el navegador no da cuadros, así que no alcanza con
 		# preguntar si está oculta: la página deja una marca al ocultarse y acá se lee.
 		# Si igual llega un cuadro larguísimo, es que estuvo afuera: pausa sin descontar.
 		var hid = _js("window.r32 ? window.r32.consumeHidden() : 0")  # booleanos llegan como 0 o 1
-		if real_delta > AWAY_S or (hid != null and bool(hid)):
+		if real_delta > AWAY_S or wall_gap_s > AWAY_S or (hid != null and bool(hid)):
 			_pause()
 		else:
 			_tick_clock(delta)
@@ -290,6 +318,23 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
+## En modo de prueba, la página ve el estado del juego (lo usan las pruebas de navegador).
+func _publish_state() -> void:
+	var btn := _button_rect()
+	var st := {
+		"screen": ["start", "playing", "paused", "result"][screen],
+		"score": round_.score,
+		"remaining_ms": round_.remaining_ms(),
+		"chain": Array(chain),
+		"first_row": Array(board.cells.slice(0, board.size)),
+		"record_enabled": record_enabled,
+		"best": best_score,
+		"button": [btn.get_center().x, btn.get_center().y],
+		"view": [get_viewport_rect().size.x, get_viewport_rect().size.y],
+	}
+	_js("window.r32 && (window.r32.state = %s)" % JSON.stringify(st))
+
+
 func _tick_clock(delta: float) -> void:
 	ms_acc += minf(delta * 1000.0, MAX_TICK_MS)
 	var ms := int(ms_acc)
@@ -313,7 +358,8 @@ func _finish() -> void:
 	games_played += 1
 	_play("fin")
 	_haptic("heavy")
-	if round_.score > best_score:
+	# Con parámetros de prueba no hay récord: ensuciaría el del jugador.
+	if record_enabled and round_.score > best_score:
 		best_score = round_.score
 		new_best = round_.score > 0
 		_js("window.r32 && window.r32.setBest(%d)" % best_score)
@@ -521,6 +567,11 @@ func _draw() -> void:
 		_draw_particles()
 		_draw_fx_text()
 		_draw_bonus()
+	if test_mode:
+		var tag := "TEST" + (" · " + " · ".join(test_label) if test_label.size() > 0 else "")
+		if not record_enabled:
+			tag += " · no record"
+		_text(font_ui, tag, Vector2(col_x + col_w * 0.5, view.y - 70.0 * px), 11.0 * px, c("pasado"))  # arriba del botón ms
 	match screen:
 		Screen.START:
 			_draw_start()

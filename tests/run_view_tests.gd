@@ -41,6 +41,7 @@ func _run() -> void:
 	_test_bug001_result_is_protected()
 	_test_bug003_early_drag_starts_after_effect()
 	_test_bug002_falling_cells_not_selectable()
+	_test_task036_no_record_with_params()
 	print("RESULT: ", "OK" if failures == 0 else "%d FAILURES" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -170,3 +171,19 @@ func _test_bug002_falling_cells_not_selectable() -> void:
 	_step(1.0, 20)  # llega; el dedo sigue ahí
 	check(view.chain.size() == 1 and view.chain[0] == 31, "BUG-002 al llegar, la casilla bajo el dedo entra (%s)" % [view.chain])
 	_release(spot)
+
+
+## TASK-036: con parámetros de prueba la partida no guarda récord.
+func _test_task036_no_record_with_params() -> void:
+	view.best_score = 0
+	view.record_enabled = false
+	_start_round(32, 2)
+	_swipe(CORTA)
+	_step(2.5, 25)
+	check(view.screen == RESULT and view.round_.score == 90, "TASK-036 la partida terminó con 90")
+	check(view.best_score == 0 and not view.new_best, "TASK-036 sin récord con parámetros de prueba")
+	view.record_enabled = true
+	_start_round(32, 2)
+	_swipe(CORTA)
+	_step(2.5, 25)
+	check(view.best_score == 90 and view.new_best, "TASK-036 sin parámetros, el récord sí se guarda")

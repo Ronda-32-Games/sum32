@@ -19,7 +19,7 @@ body { color: #F2EDE3; background: #151A2D; overflow: hidden; touch-action: none
 #status .fill { height: 100%; width: 0; background: #C5F04A; transition: width .15s; }
 #status .pct { font-size: 14px; color: #F2EDE3B3; }
 #status-notice { display: none; margin: 0 24px; padding: 14px; border-radius: 8px; background: #5b3943; text-align: center; }
-#r32-btn { position: absolute; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 10;
+#r32-btn { display: none; position: absolute; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 10;
   width: 44px; height: 44px; border-radius: 22px; border: 1px solid #F2EDE3B3; background: #232A45cc;
   color: #F2EDE3; font-size: 13px; font-weight: 700; }
 #r32-panel { display: none; position: absolute; left: 12px; right: 12px; bottom: calc(66px + env(safe-area-inset-bottom));
@@ -148,6 +148,8 @@ $GODOT_HEAD_INCLUDE
     document.getElementById('r32-panel').textContent = lines.join('\n');
   }
 
+  // TASK-036: el panel de medición solo existe en modo de prueba.
+  if (P.test) document.getElementById('r32-btn').style.display = 'block';
   document.getElementById('r32-btn').addEventListener('click', function () {
     const p = document.getElementById('r32-panel');
     const show = p.style.display !== 'block';
@@ -159,6 +161,7 @@ $GODOT_HEAD_INCLUDE
   function markHidden() { wasHidden = true; }
   document.addEventListener('visibilitychange', function () { if (document.hidden) markHidden(); });
   window.addEventListener('pagehide', markHidden);
+  document.addEventListener('freeze', markHidden);
   window.addEventListener('blur', markHidden);
   if (tg && tg.onEvent) { try { tg.onEvent('deactivated', markHidden); } catch (e) {} }
 

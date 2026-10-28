@@ -19,12 +19,31 @@ Play (when published): https://t.me/ronda32games_bot/sum32
 | `scripts/game_view.gd` | Dibujo, arrastre y puente con la página |
 | `data/config.json` | Parámetros de balance del GDD; se tocan acá, no en el código |
 | `web/shell.html` | Página de arranque: Telegram, pantalla de carga y panel de medición |
-| `tests/` | Pruebas (`godot --headless -s tests/run_tests.gd`) y vectores para el servidor |
+| `tests/` | Pruebas de reglas, de la vista y de navegador, y vectores para el servidor |
 
-**Para probar:** el botón **ms** abajo a la izquierda abre el panel de medición. Parámetros al final de la dirección, combinables con `&`:
+**Modo de prueba (TASK-036).** El jugador común no ve nada de esto. Se activa con parámetros:
 
-- `?seed=32`: la primera grilla sale siempre igual.
-- `?round=5`: la partida dura 5 segundos.
-- `?slow=10`: todo corre 10 veces más lento, para revisar animaciones.
+| Dónde | Cómo | Ejemplo |
+| --- | --- | --- |
+| Telegram | `startapp` con palabras separadas por `_` | `t.me/ronda32games_bot/sum32?startapp=test_seed32_round5` |
+| Navegador | Parámetros en la dirección | `ronda-32-games.github.io/sum32/?seed=32&round=5` |
+
+- `test`: modo de prueba sin cambiar el juego; muestra el botón **ms** (panel de medición).
+- `seed32` o `?seed=32`: la primera grilla sale siempre igual.
+- `round5` o `?round=5`: la partida dura 5 segundos.
+- `slow10` o `?slow=10`: todo corre 10 veces más lento, para revisar animaciones.
+- `cold` o `?cold=1`: fuerza a bajar el motor de internet (medición en frío, también en iPhone).
+
+Cualquiera de estos activa el modo de prueba: aparece la marca TEST en rojo abajo. Con seed, round o slow la partida no guarda récord.
+
+**Pruebas:**
+
+```
+godot --headless -s tests/run_tests.gd        # reglas (grilla, generador, partida)
+godot --headless -s tests/run_view_tests.gd   # vista: toques, pausa, resultado
+python tests/web/test_shell.py build/web      # navegador: página, panel, modo de prueba (necesita la build)
+```
+
+Las tres corren en cada publicación; si alguna falla, no se publica.
 
 Los tokens de los bots nunca van a este repo.
