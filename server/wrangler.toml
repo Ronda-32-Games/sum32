@@ -1,11 +1,14 @@
 # Worker del servidor de Sum 32 (H2). Se publica desde GitHub Actions (.github/workflows/server.yml).
-# Acá no va ningún secreto: BOT_TOKEN y DAILY_SECRET los carga Ignacio en el panel de Cloudflare.
+# Acá no va ningún secreto: BOT_TOKEN, DAILY_SECRET y STATS_TOKEN los carga Ignacio en el panel de Cloudflare.
 name = "sum32-api"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 
 [vars]
 ALLOWED_ORIGIN = "https://ronda-32-games.github.io"
+# "true" enciende la actividad y los eventos. Arranca apagado hasta que la página de
+# privacidad esté publicada (TASK-064, DEC-053).
+EVENTS_ENABLED = "false"
 
 [[d1_databases]]
 binding = "DB"

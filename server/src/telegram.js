@@ -60,6 +60,12 @@ export async function signInitData(fields, botToken) {
   return p.toString();
 }
 
+// Nombre falso y estable de un jugador para las planillas: nadie puede volver al número
+// de Telegram sin el secreto del servidor, pero el mismo jugador sale siempre igual.
+export async function pseudonym(secret, userId) {
+  return hex(await hmac(enc.encode(secret), `sum32:player:${userId}`)).slice(0, 12);
+}
+
 // Semilla del Daily: sale de un secreto del servidor, así nadie puede calcular la grilla
 // de mañana antes de tiempo.
 export async function dailySeed(secret, day) {

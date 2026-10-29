@@ -31,7 +31,7 @@ class Stmt {
 
 export function makeD1() {
   const db = new DatabaseSync(":memory:");
-  db.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
+  for (const f of ["0001_init.sql", "0002_analytics.sql"]) db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
   return {
     prepare: (sql) => new Stmt(db, sql),
     async batch(stmts) {

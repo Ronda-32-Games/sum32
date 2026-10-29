@@ -60,7 +60,12 @@ cd server && npm test    # reglas en JavaScript contra los vectores de Godot y l
 | `POST /daily/start` | Gasta un intento y recién ahí da la semilla del día |
 | `POST /run` | Recibe las jugadas (parciales o finales), rehace la partida y guarda el puntaje |
 | `GET /leaderboard` | Ranking diario: los 50 primeros y tu puesto |
+| `DELETE /me` | Borra todo lo de quien pide, en todas las tablas |
+| `GET /stats/<informe>.csv` | Planillas para Power BI; solo con `Authorization: Bearer <STATS_TOKEN>` |
 
-Todo pedido lleva `Authorization: tma <initData>`. Los secretos `BOT_TOKEN` y `DAILY_SECRET` se cargan en el panel de Cloudflare, nunca acá. `.github/workflows/server.yml` corre las pruebas y publica el Worker cuando están las claves de Cloudflare en los secretos del repo.
+Todo pedido salvo `/stats` lleva `Authorization: tma <initData>`. Los secretos `BOT_TOKEN`, `DAILY_SECRET` y `STATS_TOKEN` se cargan en el panel de Cloudflare, nunca acá. 
+**Analítica (DEC-053, DEC-054).** Cada partida guarda modo, día, puntaje, cadenas, duración del juego (`duration_ms`), tiempo real (`wall_ms`) y `clean` (1 si el servidor rehizo la partida entera y dio igual). `activity` tiene una fila por jugador y día activo; `events` una por jugador, día y evento, con un contador. Los dos arrancan apagados: se prenden con `EVENTS_ENABLED = "true"` cuando la página de privacidad esté publicada. Informes (`retention`, `funnel`, `retry`, `runs`, `players`; `?from=` y `?to=` acotan por día): salen sin nombres ni números de Telegram, cada jugador es un código de 12 letras. Los días son UTC y la retención día 1 y 7 cuenta quién volvió justo ese día. Para ver cómo salen sin datos reales: `cd server && node scripts/demo.js ../demo-out`, que simula dos semanas con jugadores de mentira.
+
+`.github/workflows/server.yml` corre las pruebas y publica el Worker cuando están las claves de Cloudflare en los secretos del repo.
 
 Los tokens de los bots nunca van a este repo.
