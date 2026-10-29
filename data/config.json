@@ -13,7 +13,7 @@
   "long_chain_len": 6,
   "long_chain_bonus_s": 2,
   "daily_free_attempts": 3,
-  "daily_ad_attempts": 2,
+  "daily_extra_attempts": 0,
   "weekly_best_days": 5,
   "interstitial_every": 3,
   "ad_free_first_runs": 3,

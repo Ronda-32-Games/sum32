@@ -1,0 +1,47 @@
+# Servidor de Sum 32: pruebas en cada cambio y, cuando estén las claves de Cloudflare
+# en los secretos del repo, publica el Worker y aplica los cambios de la base.
+name: Server
+
+on:
+  push:
+    branches: [main]
+    paths: [server/**, data/config.json, tests/*vectors*.json, tests/rng_expected.json, .github/workflows/server.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Rules and API tests
+        working-directory: server
+        run: npm test
+      - name: Bundle check (no account needed)
+        working-directory: server
+        run: npx --yes wrangler@4 deploy --dry-run --outdir dist
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish Worker
+        working-directory: server
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || grep -q '00000000-0000' wrangler.toml; then
+            echo "Todavía sin cuenta de Cloudflare o sin base: no se publica."; exit 0
+          fi
+          npx --yes wrangler@4 d1 migrations apply sum32 --remote
+          npx --yes wrangler@4 deploy

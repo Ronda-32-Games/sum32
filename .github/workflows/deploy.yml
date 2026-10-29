@@ -57,6 +57,8 @@ jobs:
           grep -q "RESULT: OK" test.log
           timeout 300 ~/godot/godot --headless -s tests/run_view_tests.gd | tee view.log
           grep -q "RESULT: OK" view.log
+          # Los vectores que usa el servidor tienen que ser los que da Godot hoy.
+          git diff --exit-code tests/board_vectors.json tests/round_vectors.json
 
       - name: Export web build
         run: |

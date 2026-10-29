@@ -1,0 +1,18 @@
+# Worker del servidor de Sum 32 (H2). Se publica desde GitHub Actions (.github/workflows/server.yml).
+# Acá no va ningún secreto: BOT_TOKEN y DAILY_SECRET los carga Ignacio en el panel de Cloudflare.
+name = "sum32-api"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+ALLOWED_ORIGIN = "https://ronda-32-games.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sum32"
+# El id de la base no es secreto; lo completa Bruno cuando Ignacio cree la base.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[triggers]
+crons = []

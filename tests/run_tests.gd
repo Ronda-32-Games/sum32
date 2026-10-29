@@ -184,3 +184,31 @@ func _write_vectors() -> void:
 	var f := FileAccess.open("res://tests/board_vectors.json", FileAccess.WRITE)
 	f.store_string(JSON.stringify(out, " "))
 	print("vectores: tests/board_vectors.json")
+	_write_round_vectors(cfg)
+
+
+## Partidas completas para el servidor de H2: jugadas con su momento y el resultado
+## que tiene que dar. Los saltos de tiempo cubren combo, corte de combo, tiempo extra
+## y el final de la partida.
+func _write_round_vectors(cfg: Dictionary) -> void:
+	var gaps := [400, 1200, 2900, 3100, 700, 2000, 3500, 150, 2600, 1800]
+	var out := []
+	for s in [0, 7, 32, 2026, 20261029, 4294967295]:
+		var bd := Board.new(cfg, s)
+		var rd := Round.new(cfg, bd)
+		var k := 0
+		while not rd.is_over():
+			rd.advance(gaps[k % gaps.size()])
+			if rd.is_over():
+				break
+			var ch := _find_chain_min_len(bd, 6) if k % 4 == 3 else bd.find_any_chain()
+			if ch.size() == 0:
+				ch = bd.find_any_chain()
+			rd.close_chain(ch)
+			k += 1
+		out.append({"seed": s, "moves": rd.moves, "score": rd.score, "chains": rd.chains,
+			"best_chain": rd.best_chain, "limit_ms": rd.limit_ms, "shuffles": bd.shuffle_count,
+			"grid_end": Array(bd.cells)})
+	var f := FileAccess.open("res://tests/round_vectors.json", FileAccess.WRITE)
+	f.store_string(JSON.stringify(out, " "))
+	print("vectores: tests/round_vectors.json (%d partidas)" % out.size())

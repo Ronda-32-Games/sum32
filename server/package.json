@@ -1,0 +1,6 @@
+{
+  "name": "sum32-server",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test --no-warnings test/*.test.js" }
+}

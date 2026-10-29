@@ -20,6 +20,7 @@ Play (when published): https://t.me/ronda32games_bot/sum32
 | `data/config.json` | Parámetros de balance del GDD; se tocan acá, no en el código |
 | `web/shell.html` | Página de arranque: Telegram, pantalla de carga y panel de medición |
 | `tests/` | Pruebas de reglas, de la vista y de navegador, y vectores para el servidor |
+| `server/` | Servidor (H2): Cloudflare Worker + D1. Reglas en JavaScript, firma de Telegram, Daily, partida verificada y ranking diario |
 
 **Modo de prueba (TASK-036).** El jugador común no ve nada de esto. Se activa con parámetros:
 
@@ -45,5 +46,21 @@ python tests/web/test_shell.py build/web      # navegador: página, panel, modo 
 ```
 
 Las tres corren en cada publicación; si alguna falla, no se publica.
+
+**Servidor (`server/`).** Rehace cada partida con las mismas reglas que Godot y guarda el puntaje que da él, no el que dice el teléfono. `tests/round_vectors.json` lo escribe Godot y el servidor tiene que dar lo mismo.
+
+```
+cd server && npm test    # reglas en JavaScript contra los vectores de Godot y la API con una base local (Node 22)
+```
+
+| Endpoint | Qué hace |
+| --- | --- |
+| `POST /session` | Valida la firma de Telegram, guarda al jugador y devuelve el estado del Daily |
+| `GET /daily` | Día (UTC), intentos que quedan y mejor puntaje del día |
+| `POST /daily/start` | Gasta un intento y recién ahí da la semilla del día |
+| `POST /run` | Recibe las jugadas (parciales o finales), rehace la partida y guarda el puntaje |
+| `GET /leaderboard` | Ranking diario: los 50 primeros y tu puesto |
+
+Todo pedido lleva `Authorization: tma <initData>`. Los secretos `BOT_TOKEN` y `DAILY_SECRET` se cargan en el panel de Cloudflare, nunca acá. `.github/workflows/server.yml` corre las pruebas y publica el Worker cuando están las claves de Cloudflare en los secretos del repo.
 
 Los tokens de los bots nunca van a este repo.
