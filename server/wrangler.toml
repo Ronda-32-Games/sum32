@@ -3,6 +3,8 @@
 name = "sum32-api"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
+# Cuenta de Cloudflare del estudio (no es secreto; TASK-058).
+account_id = "2ce5a265e8d93269cf3aa0780303b7b7"
 
 [vars]
 ALLOWED_ORIGIN = "https://ronda-32-games.github.io"
@@ -13,8 +15,8 @@ EVENTS_ENABLED = "false"
 [[d1_databases]]
 binding = "DB"
 database_name = "sum32"
-# El id de la base no es secreto; lo completa Bruno cuando Ignacio cree la base.
-database_id = "00000000-0000-0000-0000-000000000000"
+# El id de la base no es secreto (base creada por Ignacio el 30/10, TASK-058).
+database_id = "a1e30ec2-5ac0-4b21-afb6-b0b0e219ddba"
 migrations_dir = "migrations"
 
 [triggers]
