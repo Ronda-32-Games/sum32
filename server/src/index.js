@@ -6,6 +6,7 @@
 //   POST /daily/start   gasta un intento y da la semilla del día (recién ahí se ve la grilla)
 //   POST /run           recibe las jugadas, rehace la partida y guarda el puntaje
 //   GET  /leaderboard   ranking diario (?day=AAAA-MM-DD, por defecto hoy)
+//   POST /event         lo que avisa el juego: partidas de Practice y segundos con la app abierta
 //   DELETE /me          borra todo lo de quien pide (DEC-053)
 //   GET  /stats/<informe>.csv|.json   planillas para Power BI (DEC-054); solo con STATS_TOKEN
 // Todo pedido salvo /health y /stats lleva "Authorization: tma <initData>".
@@ -90,12 +91,28 @@ async function markActive(env, userId, now) {
 }
 
 // Cuenta un evento del día. source: "server" o "reported" (lo avisó el juego).
-async function bump(env, userId, event, now, source = "server") {
+async function bump(env, userId, event, now, source = "server", amount = 1) {
   if (!eventsOn(env)) return;
   await env.DB.prepare(
-    `INSERT INTO events (user_id, day, event, n, first_at, last_at, source) VALUES (?1, ?2, ?3, 1, ?4, ?4, ?5)
-     ON CONFLICT(user_id, day, event) DO UPDATE SET n = n + 1, last_at = ?4`
-  ).bind(userId, dayOf(now), event, now, source).run();
+    `INSERT INTO events (user_id, day, event, n, first_at, last_at, source) VALUES (?1, ?2, ?3, ?6, ?4, ?4, ?5)
+     ON CONFLICT(user_id, day, event) DO UPDATE SET n = n + ?6, last_at = ?4`
+  ).bind(userId, dayOf(now), event, now, source, amount).run();
+}
+
+// Lo que el juego puede avisar y el máximo por pedido (el juego manda cada 60 s como mucho).
+export const REPORTED = { practice_game: 20, app_seconds: 900 };
+
+async function reportEvents(env, userId, body, now) {
+  if (!eventsOn(env)) return { saved: false };
+  const ev = body && typeof body.events === "object" && body.events ? body.events : {};
+  const keys = Object.keys(ev).filter((k) => k in REPORTED);
+  if (!keys.length) throw new HttpError(400, "no_events");
+  await markActive(env, userId, now);
+  for (const k of keys) {
+    const n = Math.min(REPORTED[k], Math.floor(Number(ev[k])));
+    if (n > 0) await bump(env, userId, k, now, "reported", n);
+  }
+  return { saved: true };
 }
 
 async function dailyState(env, userId, now) {
@@ -218,6 +235,7 @@ async function route(request, env, now) {
     await markActive(env, uid, now);
     return { user: { id: uid, name: displayName(tg.user) }, daily: await dailyState(env, uid, now), start_param: tg.startParam };
   }
+  if (path === "/event" && method === "POST") return reportEvents(env, uid, await readBody(request), now);
   if (path === "/daily" && method === "GET") return dailyState(env, uid, now);
   if (path === "/daily/start" && method === "POST") {
     await upsertUser(env, tg.user, now);

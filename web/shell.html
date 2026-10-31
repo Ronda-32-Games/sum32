@@ -165,6 +165,42 @@ $GODOT_HEAD_INCLUDE
   window.addEventListener('blur', markHidden);
   if (tg && tg.onEvent) { try { tg.onEvent('deactivated', markHidden); } catch (e) {} }
 
+  // Analítica (TASK-063, privacy.html): solo dentro de Telegram y fuera del modo de prueba.
+  // Abre sesión (cuenta al jugador del día), y cada 60 s o al ocultarse manda las partidas
+  // terminadas y los segundos con la app visible. Si algo falla, el juego sigue igual.
+  const API = 'https://sum32-api.REPLACE.workers.dev';
+  const stats = (function () {
+    const on = inTelegram && !P.test && API.indexOf('REPLACE') < 0;
+    const pending = { practice_game: 0, app_seconds: 0 };
+    let visibleSince = document.hidden ? null : Date.now();
+    function send(path, body, keepalive) {
+      if (!on) return;
+      try {
+        fetch(API + path, { method: 'POST', keepalive: !!keepalive, body: JSON.stringify(body || {}),
+          headers: { 'Authorization': 'tma ' + tg.initData, 'Content-Type': 'application/json' } }).catch(function () {});
+      } catch (e) {}
+    }
+    function collect() {
+      if (visibleSince != null) {
+        const now = Date.now();
+        pending.app_seconds += Math.round((now - visibleSince) / 1000);
+        visibleSince = document.hidden ? null : now;
+      }
+    }
+    function flush(keepalive) {
+      collect();
+      const ev = {};
+      for (const k in pending) if (pending[k] > 0) { ev[k] = pending[k]; pending[k] = 0; }
+      if (Object.keys(ev).length) send('/event', { events: ev }, keepalive);
+    }
+    send('/session', {});
+    setInterval(function () { if (!document.hidden) flush(false); }, 60000);
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) flush(true); else visibleSince = Date.now();
+    });
+    window.addEventListener('pagehide', function () { flush(true); });
+    return { add: function (k, n) { pending[k] += n; }, flush: function () { flush(false); }, enabled: on };
+  }());
   // Funciones que llama Godot por JavaScriptBridge.
   window.r32 = {
     onGodotReady: function () {},
@@ -204,6 +240,7 @@ $GODOT_HEAD_INCLUDE
       wasHidden = false;
       return now || was;
     },
+    roundEnd: function () { stats.add('practice_game', 1); stats.flush(); },
     metrics: m,
     params: P,
     engineFrom: function () { return transferred().engineFrom; },

@@ -356,6 +356,8 @@ func _finish() -> void:
 	screen = Screen.RESULT
 	result_age = 0.0
 	games_played += 1
+	# Analítica (TASK-063): la página avisa al servidor; en modo de prueba no manda nada.
+	_js("window.r32 && window.r32.roundEnd && window.r32.roundEnd(%d)" % round_.score)
 	_play("fin")
 	_haptic("heavy")
 	# Con parámetros de prueba no hay récord: ensuciaría el del jugador.

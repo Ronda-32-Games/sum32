@@ -2,7 +2,7 @@
 // números de Telegram: cada jugador es un código de 12 letras que no se puede deshacer sin el
 // secreto del servidor, pero que es siempre el mismo para la misma persona.
 //
-// Informes: retention, funnel, retry, runs, players. Los días son UTC, igual que el Daily.
+// Informes: overview, retention, funnel, retry, runs, players. Los días son UTC, igual que el Daily.
 // ?from=AAAA-MM-DD&to=AAAA-MM-DD acota por día (por defecto, los últimos 90 días).
 
 import { pseudonym } from "./telegram.js";
@@ -138,8 +138,32 @@ async function players(env, q, secret = q.secret) {
   return out;
 }
 
+// Resumen por día para el tablero: jugadores, nuevos, partidas, minutos con la app abierta.
+async function overview(env, q) {
+  const { from, to } = range(q);
+  const days = new Map();
+  const row = (d) => {
+    if (!days.has(d)) days.set(d, { day: d, players: 0, new_players: 0, practice_games: 0, daily_games: 0, games: 0, app_minutes: 0, minutes_per_player: "" });
+    return days.get(d);
+  };
+  for (const r of await all(env, `SELECT day, COUNT(*) AS n FROM activity WHERE day BETWEEN ?1 AND ?2 GROUP BY day`, from, to)) row(r.day).players = r.n;
+  for (const r of await all(env, `SELECT d0 AS day, COUNT(*) AS n FROM (SELECT user_id, MIN(day) AS d0 FROM activity GROUP BY user_id)
+                                  WHERE d0 BETWEEN ?1 AND ?2 GROUP BY d0`, from, to)) row(r.day).new_players = r.n;
+  for (const r of await all(env, `SELECT day, COUNT(*) AS n FROM runs WHERE mode = 'daily' AND status = 'done' AND day BETWEEN ?1 AND ?2 GROUP BY day`, from, to)) row(r.day).daily_games = r.n;
+  for (const r of await all(env, `SELECT day, event, SUM(n) AS n FROM events WHERE event IN ('practice_game', 'app_seconds') AND day BETWEEN ?1 AND ?2 GROUP BY day, event`, from, to)) {
+    if (r.event === "practice_game") row(r.day).practice_games = r.n;
+    else row(r.day).app_minutes = Math.round(r.n / 6) / 10;
+  }
+  for (const d of days.values()) {
+    d.games = d.practice_games + d.daily_games;
+    d.minutes_per_player = d.players ? Math.round((10 * d.app_minutes) / d.players) / 10 : "";
+  }
+  return [...days.values()].sort((a, b) => (a.day < b.day ? -1 : 1));
+}
+
 // Cada informe recibe (env, {from, to, today}) y usa env.DAILY_SECRET para los códigos.
 export const REPORTS = {
+  overview,
   retention,
   funnel,
   retry,

@@ -134,3 +134,31 @@ test("borrar mis datos: no queda nada en ninguna tabla", async () => {
   assert.deepEqual(lb.body.top.map((r) => r.name), ["Jugador2 P."], "a desaparece del ranking");
   assert.equal((await call(w, "DELETE", "/me", null)).status, 401, "hace falta la firma de Telegram");
 });
+
+test("el juego avisa partidas de Practice y segundos abiertos; overview los suma por día", async () => {
+  const w = makeWorld(true);
+  const a = person(1), b = person(2);
+  w.at(day("2026-10-20"));
+  await call(w, "POST", "/session", a);
+  assert.equal((await call(w, "POST", "/event", a, { events: { practice_game: 2, app_seconds: 120 } })).status, 200);
+  await call(w, "POST", "/event", a, { events: { app_seconds: 5000, practice_game: 1, hacked: 9 } }); // tope 900
+  await call(w, "POST", "/event", b, { events: { app_seconds: 60 } });
+  assert.equal((await call(w, "POST", "/event", a, { events: { hacked: 1 } })).status, 400);
+  assert.equal((await call(w, "POST", "/event", null, { events: { app_seconds: 1 } })).status, 401);
+  await playDay(w, a, day("2026-10-20", 18));
+  const rows = (await stats(w, "overview", "?from=2026-10-01&to=2026-10-31")).body.rows;
+  assert.equal(rows.length, 1);
+  const r = rows[0];
+  assert.deepEqual([r.players, r.new_players, r.practice_games, r.daily_games, r.games], [2, 2, 3, 1, 4]);
+  assert.equal(r.app_minutes, 18, "120 + 900 + 60 segundos");
+  assert.equal(r.minutes_per_player, 9);
+  await call(w, "DELETE", "/me", a);
+  assert.equal(await w.env.DB.prepare("SELECT COUNT(*) AS n FROM events WHERE user_id = ?1").bind(a.id).first("n"), 0);
+});
+
+test("con los eventos apagados /event no guarda nada", async () => {
+  const w = makeWorld(false);
+  const r = await call(w, "POST", "/event", person(1), { events: { app_seconds: 30 } });
+  assert.deepEqual([r.status, r.body.saved], [200, false]);
+  assert.equal(await count(w, "events"), 0);
+});

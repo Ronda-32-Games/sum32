@@ -8,9 +8,9 @@ account_id = "2ce5a265e8d93269cf3aa0780303b7b7"
 
 [vars]
 ALLOWED_ORIGIN = "https://ronda-32-games.github.io"
-# "true" enciende la actividad y los eventos. Arranca apagado hasta que la página de
-# privacidad esté publicada (TASK-064, DEC-053).
-EVENTS_ENABLED = "false"
+# "true" enciende la actividad y los eventos. Encendido el 31/10 con la página de privacidad
+# provisoria (privacy.html en Pages); el texto final es TASK-064.
+EVENTS_ENABLED = "true"
 
 [[d1_databases]]
 binding = "DB"
