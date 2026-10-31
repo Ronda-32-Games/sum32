@@ -168,7 +168,7 @@ $GODOT_HEAD_INCLUDE
   // Analítica (TASK-063, privacy.html): solo dentro de Telegram y fuera del modo de prueba.
   // Abre sesión (cuenta al jugador del día), y cada 60 s o al ocultarse manda las partidas
   // terminadas y los segundos con la app visible. Si algo falla, el juego sigue igual.
-  const API = 'https://sum32-api.REPLACE.workers.dev';
+  const API = 'https://sum32-api.ronda32games.workers.dev';
   const stats = (function () {
     const on = inTelegram && !P.test && API.indexOf('REPLACE') < 0;
     const pending = { practice_game: 0, app_seconds: 0 };

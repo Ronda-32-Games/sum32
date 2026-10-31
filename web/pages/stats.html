@@ -58,7 +58,7 @@ th:first-child, td:first-child { text-align:left; } th { color:var(--ink2); font
 <script>
 // Tablero de Sum 32 (TASK-063). Lee /stats del servidor con el STATS_TOKEN, que queda guardado
 // solo en este navegador. La página no lleva ningún secreto.
-const API = 'https://sum32-api.REPLACE.workers.dev';
+const API = 'https://sum32-api.ronda32games.workers.dev';
 const $ = (id) => document.getElementById(id);
 let days = 30;
 function getTok() { try { return localStorage.getItem('sum32_stats_token') || ''; } catch (e) { return ''; } }
