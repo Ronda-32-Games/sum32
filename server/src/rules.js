@@ -126,8 +126,10 @@ export function replay(cfg, seed, moves, maxMoves = 400) {
   const window = num(cfg, "combo_window_s", 3) * 1000;
   const step = num(cfg, "combo_step_tenths", 5);
   const max = num(cfg, "combo_max_tenths", 30);
-  const longLen = num(cfg, "long_chain_len", 6);
-  const longBonus = num(cfg, "long_chain_bonus_s", 2) * 1000;
+  // Tiempo extra por largo de cadena: escalones [[largo, s]] (DEC-057), o el par viejo.
+  const longScale = Array.isArray(cfg.long_chain_scale)
+    ? cfg.long_chain_scale.map(([len, s]) => [Number(len), Number(s) * 1000])
+    : [[num(cfg, "long_chain_len", 6), num(cfg, "long_chain_bonus_s", 2) * 1000]];
   let elapsed = 0;
   let score = 0;
   let chains = 0;
@@ -147,7 +149,9 @@ export function replay(cfg, seed, moves, maxMoves = 400) {
     score += Math.floor((factor * n * n * combo) / 10);
     chains++;
     best = Math.max(best, n);
-    if (n >= longLen) limit += longBonus;
+    let bonus = 0;
+    for (const [len, ms] of longScale) if (n >= len) bonus = ms;
+    limit += bonus;
     lastClear = elapsed;
     board.clearChain(chain);
   }

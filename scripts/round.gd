@@ -18,8 +18,7 @@ var points_factor: int
 var combo_window_ms: int
 var combo_step: int
 var combo_max: int
-var long_len: int
-var long_bonus_ms: int
+var long_scale: Array = []  # [[largo, ms]], de menor a mayor (DEC-057)
 
 
 func _init(config: Dictionary, p_board: Board) -> void:
@@ -29,8 +28,11 @@ func _init(config: Dictionary, p_board: Board) -> void:
 	combo_window_ms = int(config.get("combo_window_s", 3)) * 1000
 	combo_step = int(config.get("combo_step_tenths", 5))
 	combo_max = int(config.get("combo_max_tenths", 30))
-	long_len = int(config.get("long_chain_len", 6))
-	long_bonus_ms = int(config.get("long_chain_bonus_s", 2)) * 1000
+	if config.has("long_chain_scale"):
+		for step in config["long_chain_scale"]:
+			long_scale.append([int(step[0]), int(step[1]) * 1000])
+	else:
+		long_scale.append([int(config.get("long_chain_len", 6)), int(config.get("long_chain_bonus_s", 2)) * 1000])
 
 
 func is_over() -> bool:
@@ -68,7 +70,7 @@ func close_chain(chain: PackedInt32Array) -> Dictionary:
 	var n := chain.size()
 	combo_tenths = combo_if_closed_now()
 	var points: int = points_factor * n * n * combo_tenths / 10
-	var bonus := long_bonus_ms if n >= long_len else 0
+	var bonus := long_bonus_for(n)
 	score += points
 	chains += 1
 	best_chain = maxi(best_chain, n)
@@ -77,3 +79,12 @@ func close_chain(chain: PackedInt32Array) -> Dictionary:
 	moves.append({"cells": Array(chain), "t": elapsed_ms})
 	var fall := board.clear_chain(chain)
 	return {"points": points, "combo": combo_tenths, "bonus_ms": bonus, "fall": fall}
+
+
+## Tiempo extra por largo de cadena: el escalón más alto que alcanza (DEC-057).
+func long_bonus_for(n: int) -> int:
+	var bonus := 0
+	for step in long_scale:
+		if n >= step[0]:
+			bonus = step[1]
+	return bonus

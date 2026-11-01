@@ -155,7 +155,7 @@ func _test_bug003_early_drag_starts_after_effect() -> void:
 func _test_bug002_falling_cells_not_selectable() -> void:
 	_start_round(32)
 	_swipe(CORTA)
-	_step(3.5, 70)  # más de 3 s: sin combo
+	_step(5.5, 110)  # más de 5 s (DEC-057): sin combo
 	_swipe(LARGA)
 	check(view.round_.score == 90 + 360, "BUG-002 la Larga da 360 (total %d)" % view.round_.score)
 	_step(0.3, 6)   # termina el efecto: empieza la caída de la columna 2
