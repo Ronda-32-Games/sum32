@@ -733,7 +733,7 @@ func _draw_bonus() -> void:
 		return
 	var alpha := clampf(1.0 - (bonus_t - 0.5) / 0.4, 0.0, 1.0)
 	var at := Vector2(col_x + col_w * 0.14, top_inset + col_w * 0.07 + 55.0 * px - 14.0 * px * bonus_t)
-	_text_outlined("+%ds" % (round_.long_bonus_ms / 1000), at, 18.0 * px, c("justo"), alpha, font_ui)
+	_text_outlined("+%ds" % (round_.last_bonus_ms / 1000), at, 18.0 * px, c("justo"), alpha, font_ui)
 
 
 func _draw_panel(rect: Rect2) -> void:

@@ -101,7 +101,7 @@ func _test_round() -> void:
 	var r1 := rd.close_chain(ch)
 	check(r1.get("points", -1) == 10 * n * n, "puntaje 10 x n^2 (n=%d)" % n)
 	check(r1.get("combo", 0) == 10, "primera cadena con combo x1")
-	# Combo: dentro de 3 s sube 0,5 por cadena hasta x3.
+	# Combo: dentro de la ventana (5 s, DEC-057) sube 0,5 por cadena hasta x3.
 	var expected := [15, 20, 25, 30, 30]
 	for k in expected.size():
 		rd.advance(2000)
@@ -110,14 +110,19 @@ func _test_round() -> void:
 		var r := rd.close_chain(c2)
 		check(r.get("combo", 0) == expected[k], "combo esperado x%.1f" % (expected[k] / 10.0))
 		check(r.get("points", -1) == 10 * m * m * expected[k] / 10, "puntaje con combo")
-	# Pasados más de 3 s, vuelve a x1.
-	rd.advance(3001)
-	check(rd.current_combo() == 10, "el combo se corta a los 3 s")
+	# Pasados más de 5 s, vuelve a x1 (DEC-057; antes 3 s).
+	rd.advance(4000)
+	check(rd.current_combo() > 10, "a los 4 s el combo sigue (ventana de 5 s)")
+	rd.advance(1001)
+	check(rd.current_combo() == 10, "el combo se corta a los 5 s")
 	var r3 := rd.close_chain(bd.find_any_chain())
 	check(r3.get("combo", 0) == 10, "después de cortarse, vuelve a x1")
 	# Cadena inválida no cuenta.
 	check(rd.close_chain(PackedInt32Array([0, 7])).is_empty(), "cadena inválida no puntúa")
-	# Tiempo extra: cadena de 6 o más suma 2 s.
+	# Tiempo extra escalado (DEC-057): 5 → +2 s, 6 → +3 s, 7 → +4 s, 8 o más → +5 s.
+	var tb := [[4, 0], [5, 2000], [6, 3000], [7, 4000], [8, 5000], [12, 5000]]
+	for pair in tb:
+		check(rd.bonus_for(pair[0]) == pair[1], "cadena de %d casillas: +%d s" % [pair[0], pair[1] / 1000])
 	var found := false
 	for s in 400:
 		var b2 := Board.new(cfg, 5000 + s)
@@ -126,8 +131,9 @@ func _test_round() -> void:
 			var r2 := Round.new(cfg, b2)
 			r2.advance(59900)
 			var res := r2.close_chain(long)
-			check(res.get("bonus_ms", 0) == 2000, "cadena de 6+ suma 2 s, aun a 0,1 s del final")
-			check(r2.remaining_ms() == 2100, "quedan 2,1 s después del bonus")
+			var want := r2.bonus_for(long.size())
+			check(res.get("bonus_ms", 0) == want and want >= 3000, "cadena de %d suma %d s, aun a 0,1 s del final" % [long.size(), want / 1000])
+			check(r2.remaining_ms() == want + 100, "queda el bonus + 0,1 s")
 			found = true
 			break
 	check(found, "se encontró una cadena de 6+ para probar el tiempo extra")

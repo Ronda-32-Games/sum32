@@ -7,7 +7,7 @@ Play (when published): https://t.me/ronda32games_bot/sum32
 ## Para el equipo
 
 - **Motor:** Godot 4.7.2, export web sin hilos, renderer Compatibility.
-- **Estado:** H1, núcleo jugable en modo Practice: partida de 60 s, puntaje 10 × n², combo de 3 s hasta x3, tiempo extra en cadenas de 6+, pausa con la grilla tapada, resultado y récord en el dispositivo. Arte y sonido v1 de Lía. Todavía sin servidor (H2).
+- **Estado:** H1, núcleo jugable en modo Practice: partida de 60 s, puntaje 10 × n², combo de 5 s hasta x3, tiempo extra escalado desde cadenas de 5 (+2 s a +5 s, DEC-057), pausa con la grilla tapada, resultado y récord en el dispositivo. Arte y sonido v1 de Lía. Todavía sin servidor (H2).
 - **Publicación:** cada cambio en `main` corre las pruebas, exporta y publica en https://ronda-32-games.github.io/sum32/ (`.github/workflows/deploy.yml`).
 
 | Carpeta | Qué tiene |
