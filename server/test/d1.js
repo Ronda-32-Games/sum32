@@ -29,9 +29,14 @@ class Stmt {
   }
 }
 
-export function makeD1() {
-  const db = new DatabaseSync(":memory:");
-  for (const f of ["0001_init.sql", "0002_analytics.sql"]) db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
+// path: archivo para la base local de scripts/dev.js; sin path, en memoria (pruebas).
+export function makeD1(path = ":memory:") {
+  const db = new DatabaseSync(path);
+  // user_version cuenta las migraciones ya corridas: la base local de dev.js no las repite.
+  const files = ["0001_init.sql", "0002_analytics.sql"];
+  const done = Number(db.prepare("PRAGMA user_version").get().user_version);
+  files.slice(done).forEach((f) => db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8")));
+  db.exec(`PRAGMA user_version = ${files.length}`);
   return {
     prepare: (sql) => new Stmt(db, sql),
     async batch(stmts) {

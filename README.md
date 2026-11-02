@@ -66,6 +66,16 @@ cd server && npm test    # reglas en JavaScript contra los vectores de Godot y l
 Todo pedido salvo `/stats` lleva `Authorization: tma <initData>`. Los secretos `BOT_TOKEN`, `DAILY_SECRET` y `STATS_TOKEN` se cargan en el panel de Cloudflare, nunca acá. 
 **Analítica (DEC-053, DEC-054).** Cada partida guarda modo, día, puntaje, cadenas, duración del juego (`duration_ms`), tiempo real (`wall_ms`) y `clean` (1 si el servidor rehizo la partida entera y dio igual). `activity` tiene una fila por jugador y día activo; `events` una por jugador, día y evento, con un contador. Los dos arrancan apagados: se prenden con `EVENTS_ENABLED = "true"` cuando la página de privacidad esté publicada. Informes (`retention`, `funnel`, `retry`, `runs`, `players`; `?from=` y `?to=` acotan por día): salen sin nombres ni números de Telegram, cada jugador es un código de 12 letras. Los días son UTC y la retención día 1 y 7 cuenta quién volvió justo ese día. Para ver cómo salen sin datos reales: `cd server && node scripts/demo.js ../demo-out`, que simula dos semanas con jugadores de mentira.
 
+**Daily en el juego (TASK-059, DEC-052).** Con servidor, el inicio ofrece DAILY (gasta un intento y recién ahí llega la grilla del día), PRACTICE y RANKING. Cada cadena del Daily sale como jugada parcial (una cada 3 s como mucho: si se cierra la app, queda lo último que llegó) y al terminar sale la final, que se reintenta si falla la red. El resultado muestra el puntaje que guardó el servidor y el puesto; RANKING muestra los 8 primeros del día, o los 6 primeros y tu fila. El Daily no toca el récord de Practice. Sin servidor (navegador común) o con `seed`, `round` o `slow`, el juego queda como en H1: solo PLAY. El código: `scripts/daily.gd` (pedidos y reintentos), `scripts/js_transport.gd` y `window.r32.net` en `web/shell.html`.
+
+**Base local, sin claves.** El mismo Worker con SQLite en un archivo y jugadores de mentira:
+
+```
+cd server && node scripts/dev.js            # http://localhost:8787 (--fresh: base vacía)
+```
+
+Con la build web servida en localhost, abrir `index.html?api=http://localhost:8787` (sumar `&user=2` para jugar como otro). `POST /dev/clock {"plus_ms": 86400000}` adelanta un día. El parámetro `api` solo acepta localhost.
+
 `.github/workflows/server.yml` corre las pruebas y publica el Worker cuando están las claves de Cloudflare en los secretos del repo.
 
 Los tokens de los bots nunca van a este repo.

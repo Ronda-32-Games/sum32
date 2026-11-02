@@ -68,6 +68,11 @@ jobs:
           cp web/pages/*.html build/web/   # privacy.html y stats.html
           ls -la build/web
 
+      # La prueba del Daily levanta la base local (server/scripts/dev.js), que usa node:sqlite.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Install browser for web tests
         run: |
           python -m venv ~/webtest

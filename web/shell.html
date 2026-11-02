@@ -73,6 +73,10 @@ $GODOT_HEAD_INCLUDE
     if (num(q.get('seed')) != null) p.seed = num(q.get('seed'));
     if (num(q.get('round')) != null) p.round = num(q.get('round'));
     if (num(q.get('slow')) != null) p.slow = num(q.get('slow'));
+    // Base local (TASK-059): ?api=http://localhost:8787 usa el servidor de server/scripts/dev.js
+    // con un jugador de mentira (?user=2 para otro). Solo localhost: nunca otro servidor.
+    const api = q.get('api');
+    if (api && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(api)) { p.api = api; p.user = num(q.get('user')) || 1; }
     if (p.round != null && p.round < 1) p.round = null;
     if (p.slow != null && p.slow < 1) p.slow = null;
     // Cualquier parámetro implica modo de prueba.
@@ -201,6 +205,39 @@ $GODOT_HEAD_INCLUDE
     window.addEventListener('pagehide', function () { flush(true); });
     return { add: function (k, n) { pending[k] += n; }, flush: function () { flush(false); }, enabled: on };
   }());
+
+  // Daily (TASK-059): Godot pide con request(id, ...) y pregunta la respuesta con poll(id) en
+  // cada cuadro, porque JavaScriptBridge no espera promesas. Dentro de Telegram usa el servidor
+  // de verdad (también con startapp=test, para que Nahir pruebe el Daily); con ?api= la base local.
+  const net = (function () {
+    let base = null, auth = null;
+    if (P.api) {
+      base = P.api;
+      auth = fetch(base + '/dev/login?user=' + P.user).then(function (r) { return r.json(); }).then(function (j) { return j.init_data; });
+    } else if (inTelegram && API.indexOf('REPLACE') < 0) {
+      base = API;
+      auth = Promise.resolve(tg.initData);
+    }
+    const replies = {};
+    function done(id, status, body) { replies[id] = JSON.stringify({ status: status, body: body || {} }); }
+    function request(id, method, path, body) {
+      if (!base) { done(id, 0, { error: 'offline' }); return; }
+      auth.then(function (init) {
+        const opt = { method: method, headers: { 'Authorization': 'tma ' + init } };
+        if (body != null) { opt.body = JSON.stringify(body); opt.headers['Content-Type'] = 'application/json'; }
+        return fetch(base + path, opt);
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) { done(id, r.status, b); });
+      }).catch(function () { done(id, 0, { error: 'network' }); });
+    }
+    function poll(id) {
+      const v = replies[id];
+      if (v === undefined) return null;
+      delete replies[id];
+      return v;
+    }
+    return { available: !!base, request: request, poll: poll };
+  }());
   // Funciones que llama Godot por JavaScriptBridge.
   window.r32 = {
     onGodotReady: function () {},
@@ -243,6 +280,7 @@ $GODOT_HEAD_INCLUDE
     roundEnd: function () { stats.add('practice_game', 1); stats.flush(); },
     metrics: m,
     params: P,
+    net: net,
     engineFrom: function () { return transferred().engineFrom; },
   };
 }());

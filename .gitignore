@@ -5,3 +5,4 @@ export_credentials.cfg
 server/node_modules/
 server/dist/
 server/.wrangler/
+.dev/
