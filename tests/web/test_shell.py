@@ -171,17 +171,107 @@ async def test_bug004_background(browser):
     await ctx.close()
 
 
-TESTS = [test_task036_test_mode, test_bug004_background]
+def find_chain(cells, n, target=32):
+    """Una cadena de vecinas (arriba, abajo, costados) que suma target, o None."""
+    def walk(path, total):
+        if total == target and len(path) >= 2:
+            return path
+        if total >= target:
+            return None
+        r, c = divmod(path[-1], n)
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            rr, cc = r + dr, c + dc
+            j = rr * n + cc
+            if 0 <= rr < n and 0 <= cc < n and j not in path:
+                got = walk(path + [j], total + cells[j])
+                if got:
+                    return got
+        return None
+    for i in range(n * n):
+        got = walk([i], cells[i])
+        if got:
+            return got
+    return None
+
+
+async def swipe_cells(page, st, cells):
+    w = await page.evaluate("window.innerWidth")
+    k = w / st["view"][0]
+    ox, oy, pitch, n = st["grid"]
+    pts = [((ox + (i % n + 0.5) * pitch) * k, (oy + (i // n + 0.5) * pitch) * k) for i in cells]
+    await page.mouse.move(*pts[0])
+    await page.mouse.down()
+    for p in pts[1:]:
+        await page.mouse.move(*p, steps=4)
+    await page.mouse.up()
+
+
+def button(st, name):
+    return next((b for b in st["buttons"] if b[0] == name), None)
+
+
+async def test_task059_daily(browser):
+    """TASK-059 (DEC-052): Daily de punta a punta contra la base local (server/scripts/dev.js)."""
+    import os, subprocess, tempfile, urllib.request
+    db = os.path.join(tempfile.mkdtemp(prefix="sum32-dev-"), "dev.db")
+    here = os.path.dirname(os.path.abspath(__file__))
+    srv = subprocess.Popen(["node", os.path.join(here, "../../server/scripts/dev.js"), "--port", "8791", "--db", db],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        srv.stdout.readline()  # "Sum 32, base local: ..."
+        ctx, page, errors = await new_page(browser)
+        await open_game(page, "?test&api=http://127.0.0.1:8791")
+        st = await wait_state(page, "window.r32.state.daily.day === 'ok'")
+        check([b[0] for b in st["buttons"]] == ["daily", "practice", "ranking"], f"TASK-059 inicio con DAILY, PRACTICE y RANKING ({[b[0] for b in st['buttons']]})")
+        check(st["daily"]["left"] == 3, f"TASK-059 3 intentos (DEC-052) ({st['daily']['left']})")
+        await tap_game(page, *button(st, "daily")[1:3])
+        st = await wait_state(page, "window.r32.state.screen === 'playing' && window.r32.state.mode === 'daily'")
+        made = 0
+        for _ in range(3):
+            st = await page.evaluate("window.r32.state")
+            ch = find_chain(st["cells"], st["grid"][3])
+            if not ch or st["screen"] != "playing":
+                break
+            await swipe_cells(page, st, ch)
+            await page.wait_for_timeout(900)  # que caigan las nuevas
+            made += 1
+        st = await page.evaluate("window.r32.state")
+        check(made >= 2 and st["score"] > 0, f"TASK-059 se jugaron {made} cadenas ({st['score']} puntos)")
+        st = await wait_state(page, "window.r32.state.screen === 'result' && window.r32.state.daily.run !== 'pending'", 90000)
+        check(st["daily"]["run"] == "ok" and st["daily"]["score"] == st["score"], f"TASK-059 el servidor rehizo la partida y da el mismo puntaje ({st['daily']['score']} = {st['score']})")
+        check(st["daily"]["rank"] == 1, f"TASK-059 puesto 1 del día ({st['daily']['rank']})")
+        await page.wait_for_timeout(900)
+        await tap_game(page, *button(st, "ranking")[1:3])
+        st = await wait_state(page, "window.r32.state.screen === 'ranking' && window.r32.state.daily.board === 'ok'")
+        check(True, "TASK-059 la pantalla de ranking cargó")
+        await tap_game(page, *button(st, "back")[1:3])
+        st = await wait_state(page, "window.r32.state.screen === 'start' && window.r32.state.mode === 'practice' && window.r32.state.daily.left === 2")
+        check(True, "TASK-059 vuelve al inicio con 2 intentos")
+        login = json.load(urllib.request.urlopen("http://127.0.0.1:8791/dev/login?user=1"))
+        req = urllib.request.Request("http://127.0.0.1:8791/leaderboard", headers={"Authorization": "tma " + login["init_data"]})
+        lb = json.load(urllib.request.urlopen(req))
+        check(lb["players"] == 1 and lb["top"][0]["score"] > 0, f"TASK-059 la base guardó el puntaje del Daily ({lb['top']})")
+        check(not errors, f"sin errores de página ({errors[:2]})")
+        await ctx.close()
+    finally:
+        srv.terminate()
+
+
+# Para correr solo algunas: python -I tests/web/test_shell.py build/web test_task059_daily
+TESTS = [test_task036_test_mode, test_bug004_background, test_task059_daily]
 
 
 async def main():
     srv = serve()
     try:
         async with async_playwright() as p:
-            await test_bug005_engine_source(p)
+            if not sys.argv[2:]:
+                await test_bug005_engine_source(p)
             browser = await p.chromium.launch(args=ARGS)
+            only = sys.argv[2:]
             for t in TESTS:
-                await t(browser)
+                if not only or t.__name__ in only:
+                    await t(browser)
             await browser.close()
     finally:
         srv.shutdown()

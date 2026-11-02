@@ -18,7 +18,7 @@ const BODY_PX := 200.0
 const BODY_CENTER_Y := [121.5, 113.5, 113.5, 113.5, 121.5]  # las de cadena suben 2 px
 
 # Pantallas de H1.
-enum Screen { START, PLAYING, PAUSED, RESULT }
+enum Screen { START, PLAYING, PAUSED, RESULT, RANKING, WAIT }
 
 # Tiempos del efecto del ¡32! (traspaso de Lía).
 const FX_GROW := 0.08
@@ -47,6 +47,11 @@ var sounds: Dictionary = {}
 var screen := Screen.START
 var seed_base := 0
 var games_played := 0
+# Daily (TASK-059, DEC-052). mode: "practice" o "daily". Sin servidor (fuera de Telegram,
+# o con parámetros de prueba que cambian la partida) el juego queda como antes: solo Practice.
+var daily: DailyClient
+var mode := "practice"
+var menu_note := ""        # aviso en el inicio (por ejemplo, si no se pudo empezar el Daily)
 
 var chain := PackedInt32Array()
 var dragging := false
@@ -106,6 +111,9 @@ func _ready() -> void:
 	_read_test_params()
 	var saved = _js("window.r32 ? window.r32.getBest() : 0")
 	best_score = int(saved) if saved != null else 0
+	daily = DailyClient.new(JsTransport.new() if OS.has_feature("web") else null)
+	if daily_enabled():
+		daily.refresh()
 	_new_round()
 	fall_offset.resize(board.size * board.size)
 	get_viewport().size_changed.connect(_layout)
@@ -137,9 +145,19 @@ func _read_test_params() -> void:
 		test_label.append("slow x%d" % int(p["slow"]))
 
 
-func _new_round() -> void:
+## El Daily se ofrece si hay servidor y la partida es la oficial (sin seed, round ni slow).
+func daily_enabled() -> bool:
+	return record_enabled and daily != null and daily.available()
+
+
+## daily_seed >= 0: partida del Daily con la semilla que dio el servidor.
+func _new_round(daily_seed: int = -1) -> void:
 	# Practice: grilla nueva por partida. Con ?seed=, la primera es la pedida.
 	var seed_value := seed_base if games_played == 0 else Mulberry32.derive(seed_base, games_played)
+	mode = "practice"
+	if daily_seed >= 0:
+		seed_value = daily_seed & Mulberry32.MASK
+		mode = "daily"
 	board = Board.new(config, seed_value)
 	round_ = Round.new(config, board)
 	chain = PackedInt32Array()
@@ -262,6 +280,7 @@ func _process(delta: float) -> void:
 	var now_ms := Time.get_ticks_msec()
 	var wall_gap_s := 0.0 if last_frame_ms < 0 else (now_ms - last_frame_ms) / 1000.0
 	last_frame_ms = now_ms
+	_update_daily(now_ms / 1000.0)
 	if test_mode:
 		state_timer += real_delta
 		if state_timer >= 0.1:
@@ -283,6 +302,8 @@ func _process(delta: float) -> void:
 		result_age += real_delta
 		if result_age < RESULT_GUARD_S + 0.1:
 			queue_redraw()
+	elif screen == Screen.WAIT:
+		queue_redraw()  # los puntitos de "Loading"
 
 	var animating := screen == Screen.PLAYING
 	if fx_t >= 0.0:
@@ -322,11 +343,18 @@ func _process(delta: float) -> void:
 func _publish_state() -> void:
 	var btn := _button_rect()
 	var st := {
-		"screen": ["start", "playing", "paused", "result"][screen],
+		"screen": ["start", "playing", "paused", "result", "ranking", "wait"][screen],
+		"mode": mode,
+		"daily": {"enabled": daily_enabled(), "day": daily.day_state, "left": daily.attempts_left(),
+			"run": daily.run_state, "score": daily.result.get("score"), "rank": daily.result.get("rank"),
+			"board": daily.board_state, "error": daily.error},
+		"buttons": _buttons().map(func(b): return [b["id"], (b["rect"] as Rect2).get_center().x, (b["rect"] as Rect2).get_center().y, b["enabled"]]),
 		"score": round_.score,
 		"remaining_ms": round_.remaining_ms(),
 		"chain": Array(chain),
 		"first_row": Array(board.cells.slice(0, board.size)),
+		"cells": Array(board.cells),
+		"grid": [grid_origin.x, grid_origin.y, cell_pitch, board.size],
 		"record_enabled": record_enabled,
 		"best": best_score,
 		"button": [btn.get_center().x, btn.get_center().y],
@@ -355,11 +383,16 @@ func _finish() -> void:
 	chain_state = "neutro"
 	screen = Screen.RESULT
 	result_age = 0.0
+	_play("fin")
+	_haptic("heavy")
+	if mode == "daily":
+		# El puntaje que vale es el que calcula el servidor rehaciendo la partida.
+		daily.push_moves(round_.moves, true)
+		queue_redraw()
+		return
 	games_played += 1
 	# Analítica (TASK-063): la página avisa al servidor; en modo de prueba no manda nada.
 	_js("window.r32 && window.r32.roundEnd && window.r32.roundEnd(%d)" % round_.score)
-	_play("fin")
-	_haptic("heavy")
 	# Con parámetros de prueba no hay récord: ensuciaría el del jugador.
 	if record_enabled and round_.score > best_score:
 		best_score = round_.score
@@ -389,17 +422,15 @@ func _gui_input(event: InputEvent) -> void:
 
 func _on_tap_overlay(pos: Vector2) -> void:
 	match screen:
-		Screen.START, Screen.RESULT:
+		Screen.START, Screen.RESULT, Screen.RANKING:
 			# BUG-001: el resultado queda a la vista un momento antes de poder saltearlo.
 			if screen == Screen.RESULT and result_age < RESULT_GUARD_S:
 				return
-			if _button_rect().has_point(pos):
-				_play("boton")
-				if screen == Screen.RESULT:
-					_new_round()
-					_layout()
-				screen = Screen.PLAYING
-				queue_redraw()
+			for b in _buttons():
+				if b["enabled"] and (b["rect"] as Rect2).has_point(pos):
+					_play("boton")
+					_on_button(b["id"])
+					return
 		Screen.PAUSED:
 			_play("boton")
 			screen = Screen.PLAYING  # cualquier toque sigue
@@ -500,6 +531,8 @@ func _end() -> void:
 			if res["bonus_ms"] > 0:
 				bonus_t = 0.0
 				_play("tiempo_extra")
+			if mode == "daily":
+				daily.push_moves(round_.moves, false)  # DEC-052: si se abandona, queda esto
 	chain = PackedInt32Array()
 	chain_state = "neutro"
 	queue_redraw()
@@ -581,6 +614,11 @@ func _draw() -> void:
 			_draw_cover("Paused", "Tap to continue")
 		Screen.RESULT:
 			_draw_result()
+		Screen.RANKING:
+			_draw_ranking()
+		Screen.WAIT:
+			var dots := ".".repeat(1 + (Time.get_ticks_msec() / 400) % 3)
+			_draw_cover("Daily", "Loading" + dots)
 
 
 func _fmt_score(v: int) -> String:
@@ -743,40 +781,173 @@ func _draw_panel(rect: Rect2) -> void:
 	draw_style_box(sb, rect)
 
 
-## Rectángulo del botón de las pantallas de inicio y resultado (lo usan el dibujo y el toque).
-func _button_rect() -> Rect2:
+## Botones de la pantalla actual: lo usan el dibujo, el toque y el estado que lee el navegador.
+## Cada uno: {"id", "label", "rect", "primary", "enabled"}. Sin Daily, las pantallas tienen
+## un solo botón, como en H1.
+func _buttons() -> Array:
+	var out: Array = []
+	var with_daily := daily_enabled() and daily.day_state == "ok"
+	match screen:
+		Screen.START:
+			if with_daily:
+				var left := daily.attempts_left()
+				out.append(_btn("daily", "DAILY" if left > 0 else "DAILY DONE", 0, left > 0, true))
+				out.append(_btn("practice", "PRACTICE", 1, true, false))
+				out.append(_btn("ranking", "RANKING", 2, true, false))
+			else:
+				out.append(_btn("practice", "PLAY", -1, true, true))
+		Screen.RESULT:
+			var ready := result_age >= RESULT_GUARD_S
+			if mode == "daily":
+				out.append(_btn("ranking", "RANKING", 0, ready, true))
+				out.append(_btn("menu", "MENU", 3, ready, false))
+			elif with_daily:
+				out.append(_btn("practice", "PLAY AGAIN", 0, ready, true))
+				out.append(_btn("menu", "MENU", 3, ready, false))
+			else:
+				out.append(_btn("practice", "PLAY AGAIN", -1, ready, true))
+		Screen.RANKING:
+			out.append(_btn("back", "BACK", -1, true, true))
+	return out
+
+
+## slot -1: botón único (como H1). 0: principal arriba. 1 y 2: mitades de abajo. 3: abajo entero.
+func _btn(id: String, label: String, slot: int, enabled: bool, primary: bool) -> Dictionary:
 	var r := _overlay_rect()
-	var bsz := Vector2(col_w * 0.6, 52.0 * px)
-	var center := Vector2(r.get_center().x, r.position.y + r.size.y * 0.78)
-	return Rect2(center - bsz * 0.5, bsz)
+	var cx := r.get_center().x
+	var rect: Rect2
+	if slot == -1:
+		var bsz := Vector2(col_w * 0.6, 52.0 * px)
+		rect = Rect2(Vector2(cx, r.position.y + r.size.y * 0.78) - bsz * 0.5, bsz)
+	elif slot == 0:
+		var bsz := Vector2(col_w * 0.6, 48.0 * px)
+		rect = Rect2(Vector2(cx, r.position.y + r.size.y * 0.71) - bsz * 0.5, bsz)
+	else:
+		var y := r.position.y + r.size.y * 0.885
+		var h := 38.0 * px
+		var w := col_w * 0.6
+		if slot == 3:
+			rect = Rect2(Vector2(cx - w * 0.5, y - h * 0.5), Vector2(w, h))
+		else:
+			var half := (w - 8.0 * px) * 0.5
+			var x := cx - w * 0.5 if slot == 1 else cx + 4.0 * px
+			rect = Rect2(Vector2(x, y - h * 0.5), Vector2(half, h))
+	return {"id": id, "label": label, "rect": rect, "primary": primary, "enabled": enabled}
 
 
-func _draw_button(label: String) -> void:
-	var rect := _button_rect()
-	var ready := not (screen == Screen.RESULT and result_age < RESULT_GUARD_S)
+## El botón principal (lo usan las pruebas de H1 y el navegador).
+func _button_rect() -> Rect2:
+	for b in _buttons():
+		if b["primary"]:
+			return b["rect"]
+	return Rect2()
+
+
+func _on_button(id: String) -> void:
+	match id:
+		"practice":
+			_new_round()
+			_layout()
+			screen = Screen.PLAYING
+		"daily":
+			menu_note = ""
+			daily.start()
+			screen = Screen.WAIT
+		"ranking":
+			daily.fetch_leaderboard()
+			screen = Screen.RANKING
+		"menu":
+			_to_menu()
+		"back":
+			_to_menu()
+	queue_redraw()
+
+
+func _to_menu() -> void:
+	screen = Screen.START
+	if mode == "daily":
+		_new_round()  # que el inicio no muestre la grilla del Daily terminada
+		_layout()
+	daily.refresh()
+
+
+## Respuestas del servidor del Daily. now_s: reloj real.
+func _update_daily(now_s: float) -> void:
+	if daily == null:
+		return
+	daily.update(now_s)
+	if screen == Screen.WAIT and daily.start_state != "pending":
+		if daily.start_state == "ok":
+			_new_round(daily.seed)
+			_layout()
+			screen = Screen.PLAYING
+		else:
+			menu_note = "No attempts left today." if daily.error == "no_attempts" else "Couldn't start the Daily. Try again."
+			screen = Screen.START
+			daily.refresh()
+		queue_redraw()
+	elif screen == Screen.RESULT and mode == "daily":
+		queue_redraw()  # "Checking..." hasta que llegue el puntaje
+	elif screen == Screen.RANKING or screen == Screen.START:
+		queue_redraw()
+
+
+func _draw_button_at(b: Dictionary) -> void:
+	var rect: Rect2 = b["rect"]
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = c("justo") if ready else c("justo").darkened(0.45)
 	sb.set_corner_radius_all(int(14.0 * px))
+	var label_col := c("numero")
+	if b["primary"]:
+		sb.bg_color = c("justo") if b["enabled"] else c("justo").darkened(0.45)
+	else:
+		sb.bg_color = c("fondo")
+		sb.border_color = c("texto_suave")
+		sb.set_border_width_all(maxi(1, int(1.5 * px)))
+		label_col = c("texto") if b["enabled"] else c("texto_suave")
 	draw_style_box(sb, rect)
-	_text(font_ui, label, rect.get_center() + Vector2(0, 7.0 * px), 20.0 * px, c("numero"))
+	var size := (20.0 if b["primary"] else 14.0) * px
+	_text(font_ui, b["label"], rect.get_center() + Vector2(0, size * 0.35), size, label_col)
+
+
+func _draw_buttons() -> void:
+	for b in _buttons():
+		_draw_button_at(b)
 
 
 func _overlay_rect() -> Rect2:
 	return Rect2(Vector2(grid_origin.x, grid_origin.y), Vector2(grid_w, grid_w))
 
 
+func _fmt_wait(ms: int) -> String:
+	var mins := int(ceil(ms / 60000.0))
+	return "%dh %02dm" % [mins / 60, mins % 60] if mins >= 60 else "%dm" % mins
+
+
 func _draw_start() -> void:
 	var r := _overlay_rect()
 	_draw_panel(r)
 	var cx := r.get_center().x
-	_text(font_ui, "SUM 32", Vector2(cx, r.position.y + r.size.y * 0.26), 40.0 * px, c("texto"))
+	var with_daily := daily_enabled() and daily.day_state == "ok"
+	_text(font_ui, "SUM 32", Vector2(cx, r.position.y + r.size.y * (0.2 if with_daily else 0.26)), 40.0 * px, c("texto"))
 	var secs := int(config.get("round_seconds", 60))
 	var lines := ["Link neighbours that", "add up to %d." % board.target, "Longer chains score more.", "%d seconds." % secs]
+	var y0 := 0.31 if with_daily else 0.38
 	for k in lines.size():
-		_text(font_ui, lines[k], Vector2(cx, r.position.y + r.size.y * (0.38 + k * 0.065)), 12.0 * px, c("texto_suave"))
-	if best_score > 0:
+		_text(font_ui, lines[k], Vector2(cx, r.position.y + r.size.y * (y0 + k * 0.06)), 12.0 * px, c("texto_suave"))
+	if with_daily:
+		var left := daily.attempts_left()
+		var line := "Daily: %d of %d attempts left" % [left, daily.attempts_allowed()]
+		if left <= 0:
+			line = "New Daily in " + _fmt_wait(daily.resets_in_ms(Time.get_ticks_msec() / 1000.0))
+		_text(font_ui, line, Vector2(cx, r.position.y + r.size.y * 0.58), 13.0 * px, c("texto"))
+		var sub := menu_note
+		if sub == "" and daily.best_today() > 0:
+			sub = "Best today: " + _fmt_score(daily.best_today())
+		if sub != "":
+			_text(font_ui, sub, Vector2(cx, r.position.y + r.size.y * 0.63), 12.0 * px, c("texto_suave"))
+	elif best_score > 0:
 		_text(font_ui, "Best: " + _fmt_score(best_score), Vector2(cx, r.position.y + r.size.y * 0.66), 14.0 * px, c("texto"))
-	_draw_button("PLAY")
+	_draw_buttons()
 
 
 func _draw_cover(title: String, subtitle: String) -> void:
@@ -790,14 +961,82 @@ func _draw_result() -> void:
 	var r := _overlay_rect()
 	_draw_panel(r)
 	var cx := r.get_center().x
-	_text(font_ui, "TIME'S UP", Vector2(cx, r.position.y + r.size.y * 0.17), 15.0 * px, c("texto_suave"))
-	_text(font_num, _fmt_score(round_.score), Vector2(cx, r.position.y + r.size.y * 0.36), 44.0 * px, c("justo") if new_best else c("texto"))
-	if new_best:
-		_text(font_ui, "NEW BEST!", Vector2(cx, r.position.y + r.size.y * 0.46), 15.0 * px, c("justo"))
+	var at := func(f: float) -> float: return r.position.y + r.size.y * f
+	if mode == "daily":
+		_text(font_ui, "DAILY · TIME'S UP", Vector2(cx, at.call(0.14)), 15.0 * px, c("texto_suave"))
+		_text(font_num, _fmt_score(round_.score), Vector2(cx, at.call(0.31)), 44.0 * px, c("texto"))
+		var line := "Checking score..."
+		var col := c("texto_suave")
+		match daily.run_state:
+			"ok":
+				var rank = daily.result.get("rank")
+				line = "Saved" + ("  ·  Rank #%d" % int(rank) if rank != null else "")
+				col = c("justo")
+				if int(daily.result.get("score", round_.score)) != round_.score:
+					line = "Saved: " + _fmt_score(int(daily.result["score"])) + ("  ·  #%d" % int(rank) if rank != null else "")
+			"error":
+				line = "Not saved (%s)" % daily.error
+				col = c("pasado")
+		_text(font_ui, line, Vector2(cx, at.call(0.41)), 14.0 * px, col)
+		_text(font_ui, "Chains: %d   Longest: %d" % [round_.chains, round_.best_chain], Vector2(cx, at.call(0.50)), 13.0 * px, c("texto"))
+		var left := daily.attempts_left()
+		_text(font_ui, "%d attempt%s left today" % [left, "" if left == 1 else "s"], Vector2(cx, at.call(0.57)), 12.0 * px, c("texto_suave"))
 	else:
-		_text(font_ui, "Best: " + _fmt_score(best_score), Vector2(cx, r.position.y + r.size.y * 0.46), 14.0 * px, c("texto_suave"))
-	_text(font_ui, "Chains: %d   Longest: %d" % [round_.chains, round_.best_chain], Vector2(cx, r.position.y + r.size.y * 0.58), 14.0 * px, c("texto"))
-	_draw_button("PLAY AGAIN")
+		var with_daily := daily_enabled() and daily.day_state == "ok"
+		var k := 0.9 if with_daily else 1.0  # con dos botones el texto sube un poco
+		_text(font_ui, "TIME'S UP", Vector2(cx, at.call(0.17 * k)), 15.0 * px, c("texto_suave"))
+		_text(font_num, _fmt_score(round_.score), Vector2(cx, at.call(0.36 * k)), 44.0 * px, c("justo") if new_best else c("texto"))
+		if new_best:
+			_text(font_ui, "NEW BEST!", Vector2(cx, at.call(0.46 * k)), 15.0 * px, c("justo"))
+		else:
+			_text(font_ui, "Best: " + _fmt_score(best_score), Vector2(cx, at.call(0.46 * k)), 14.0 * px, c("texto_suave"))
+		_text(font_ui, "Chains: %d   Longest: %d" % [round_.chains, round_.best_chain], Vector2(cx, at.call(0.58 * k)), 14.0 * px, c("texto"))
+	_draw_buttons()
+
+
+const RANK_ROWS := 8
+
+
+func _draw_ranking() -> void:
+	var r := _overlay_rect()
+	_draw_panel(r)
+	var cx := r.get_center().x
+	var at := func(f: float) -> float: return r.position.y + r.size.y * f
+	_text(font_ui, "TODAY'S RANKING", Vector2(cx, at.call(0.1)), 16.0 * px, c("texto"))
+	if daily.board_state != "ok":
+		var msg := "Loading..." if daily.board_state == "pending" else "Couldn't load the ranking."
+		_text(font_ui, msg, Vector2(cx, at.call(0.42)), 13.0 * px, c("texto_suave"))
+		_draw_buttons()
+		return
+	var lb := daily.leaderboard
+	var top: Array = lb.get("top", [])
+	var players := int(lb.get("players", 0))
+	_text(font_ui, "%d player%s · resets 00:00 UTC" % [players, "" if players == 1 else "s"], Vector2(cx, at.call(0.155)), 11.0 * px, c("texto_suave"))
+	if top.is_empty():
+		_text(font_ui, "Nobody yet. Be the first!", Vector2(cx, at.call(0.42)), 13.0 * px, c("texto_suave"))
+	var left_x := r.position.x + r.size.x * 0.1
+	var right_x := r.position.x + r.size.x * 0.9
+	var rows := top.slice(0, RANK_ROWS)
+	var me = lb.get("me")
+	var me_in_top := rows.any(func(row): return bool(row.get("me", false)))
+	if me is Dictionary and not me_in_top:
+		# Fuera de los 8: los 6 primeros, "···" y tu fila, sin pisar el botón.
+		rows = top.slice(0, RANK_ROWS - 2)
+		_text(font_ui, "···", Vector2(cx, at.call(0.24 + (RANK_ROWS - 2) * 0.058 - 0.015)), 12.0 * px, c("texto_suave"))
+		_rank_row({"rank": me["rank"], "name": "You", "score": me["score"], "me": true}, at.call(0.24 + (RANK_ROWS - 1) * 0.058), left_x, right_x)
+	for k in rows.size():
+		_rank_row(rows[k], at.call(0.24 + k * 0.058), left_x, right_x)
+	_draw_buttons()
+
+
+func _rank_row(row: Dictionary, y: float, left_x: float, right_x: float) -> void:
+	var size := int(13.0 * px)
+	var col := c("justo") if bool(row.get("me", false)) else c("texto")
+	var name := "%d. %s" % [int(row.get("rank", 0)), str(row.get("name", "?"))]
+	draw_string(font_ui, Vector2(left_x, y), name, HORIZONTAL_ALIGNMENT_LEFT, (right_x - left_x) * 0.7, size, col)
+	var score := _fmt_score(int(row.get("score", 0)))
+	var w := font_ui.get_string_size(score, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	draw_string(font_ui, Vector2(right_x - w, y), score, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
 
 
 func _text(font: Font, text: String, center_baseline: Vector2, size_px: float, color: Color) -> void:
