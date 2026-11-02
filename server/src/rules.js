@@ -126,8 +126,9 @@ export function replay(cfg, seed, moves, maxMoves = 400) {
   const window = num(cfg, "combo_window_s", 3) * 1000;
   const step = num(cfg, "combo_step_tenths", 5);
   const max = num(cfg, "combo_max_tenths", 30);
-  const longLen = num(cfg, "long_chain_len", 6);
-  const longBonus = num(cfg, "long_chain_bonus_s", 2) * 1000;
+  // DEC-057: [0] para long_chain_from casillas, el siguiente para una más; el último para todas las más largas.
+  const longFrom = num(cfg, "long_chain_from", 5);
+  const longBonus = (Array.isArray(cfg.long_chain_bonus_s) ? cfg.long_chain_bonus_s : [2, 3, 4, 5]).map((s) => Number(s) * 1000);
   let elapsed = 0;
   let score = 0;
   let chains = 0;
@@ -147,7 +148,7 @@ export function replay(cfg, seed, moves, maxMoves = 400) {
     score += Math.floor((factor * n * n * combo) / 10);
     chains++;
     best = Math.max(best, n);
-    if (n >= longLen) limit += longBonus;
+    if (n >= longFrom && longBonus.length) limit += longBonus[Math.min(n - longFrom, longBonus.length - 1)];
     lastClear = elapsed;
     board.clearChain(chain);
   }

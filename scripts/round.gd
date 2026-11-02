@@ -18,8 +18,9 @@ var points_factor: int
 var combo_window_ms: int
 var combo_step: int
 var combo_max: int
-var long_len: int
-var long_bonus_ms: int
+var long_from: int
+var long_bonus_ms: PackedInt32Array  # DEC-057: [0] para long_from casillas, el último para más
+var last_bonus_ms: int = 0           # el de la última cadena (para el cartel "+3s")
 
 
 func _init(config: Dictionary, p_board: Board) -> void:
@@ -29,8 +30,16 @@ func _init(config: Dictionary, p_board: Board) -> void:
 	combo_window_ms = int(config.get("combo_window_s", 3)) * 1000
 	combo_step = int(config.get("combo_step_tenths", 5))
 	combo_max = int(config.get("combo_max_tenths", 30))
-	long_len = int(config.get("long_chain_len", 6))
-	long_bonus_ms = int(config.get("long_chain_bonus_s", 2)) * 1000
+	long_from = int(config.get("long_chain_from", 5))
+	for s in config.get("long_chain_bonus_s", [2, 3, 4, 5]):
+		long_bonus_ms.append(int(s) * 1000)
+
+
+## Tiempo extra de una cadena de n casillas (DEC-057).
+func bonus_for(n: int) -> int:
+	if n < long_from or long_bonus_ms.is_empty():
+		return 0
+	return long_bonus_ms[mini(n - long_from, long_bonus_ms.size() - 1)]
 
 
 func is_over() -> bool:
@@ -68,7 +77,8 @@ func close_chain(chain: PackedInt32Array) -> Dictionary:
 	var n := chain.size()
 	combo_tenths = combo_if_closed_now()
 	var points: int = points_factor * n * n * combo_tenths / 10
-	var bonus := long_bonus_ms if n >= long_len else 0
+	var bonus := bonus_for(n)
+	last_bonus_ms = bonus
 	score += points
 	chains += 1
 	best_chain = maxi(best_chain, n)
